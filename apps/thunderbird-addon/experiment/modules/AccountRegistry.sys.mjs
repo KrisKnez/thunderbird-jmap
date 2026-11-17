@@ -7,22 +7,29 @@
 // sync engine, store) per server with serialized syncs.
 
 import { MailServices } from "resource:///modules/MailServices.sys.mjs";
+import { MailUtils } from "resource:///modules/MailUtils.sys.mjs";
 import {
   CORE_VERSION,
   JmapClient,
   JmapError,
   SyncEngine,
   discoverSession,
+  JmapNetworkError,
+  RedirectNotSupportedError,
+  SubmissionRefusedError,
+  SubmissionUncertainError,
+  sendDraft,
 } from "./core.sys.mjs";
 import { log } from "./Log.sys.mjs";
 import { registerComponents, unregisterComponents } from "./Registration.sys.mjs";
-import { TbMailStore } from "./TbMailStore.sys.mjs";
+import { TbMailStore, mailboxIdOf } from "./TbMailStore.sys.mjs";
 import { TYPE } from "./IncomingServer.sys.mjs";
 import {
   createOutgoingServer,
   deleteOutgoingServersFor,
   ensureOutgoingServers,
   parkOutgoingServers,
+  setSendHandler,
 } from "./OutgoingServer.sys.mjs";
 import { syncIdentities } from "./Identities.sys.mjs";
 
@@ -120,10 +127,59 @@ const serverRemovedObserver = {
   },
 };
 
+/** The text Thunderbird shows when a send fails (fixed copy, see the Phase 2 plan). */
+function sendErrorText(e) {
+  if (e instanceof RedirectNotSupportedError) {
+    return "Redirect isn't available for JMAP accounts.";
+  }
+  if (e instanceof SubmissionRefusedError) {
+    const reason = String(e.error.description ?? e.error.type).replace(/\.\s*$/, "");
+    return `The server did not send this message: ${reason}. If a copy appears in Sent, it was not delivered.`;
+  }
+  if (e instanceof SubmissionUncertainError) {
+    return "The connection was lost while sending. The message may have been sent; check Sent before sending it again.";
+  }
+  if (e instanceof JmapNetworkError) {
+    return "Couldn't reach the mail server. The message was not sent.";
+  }
+  return `The message was not sent: ${e?.message ?? e}`;
+}
+
+/** Send a composed message from a JMAP identity (called by the jmap outgoing server). */
+async function sendFromIdentity(incoming, { file, to, bcc, identity }) {
+  const folder = uri => (uri ? MailUtils.getExistingFolder(uri) : null);
+  const drafts = folder(identity.draftsFolderURI);
+  const sent = folder(identity.fccFolderURI);
+  const draftsMailboxId = drafts ? mailboxIdOf(drafts) : "";
+  const sentMailboxId = sent ? mailboxIdOf(sent) : "";
+  const identityId = identity.getCharAttribute("jmap_identity_id");
+  if (!identityId || !draftsMailboxId || !sentMailboxId) {
+    throw new Error("This identity has no Drafts or Sent folder on the server.");
+  }
+  const runtime = runtimeFor(incoming);
+  try {
+    const raw = await IOUtils.read(file.path);
+    await sendDraft(await runtime.getClient(), incoming.getStringValue("jmap_account_id"), {
+      raw,
+      to,
+      bcc,
+      identity: { id: identityId, email: identity.email },
+      draftsMailboxId,
+      sentMailboxId,
+    });
+  } catch (e) {
+    log.warn(`sending from ${identity.email} failed`, e);
+    throw new Error(sendErrorText(e));
+  }
+  // Bring the server's Sent copy down.
+  syncServer(incoming, "sent").catch(() => {});
+}
+
 /** Called by the Experiment's onStartup. */
 export function startup() {
   try {
     registerComponents();
+    setSendHandler(sendFromIdentity);
     Services.obs.addObserver(serverRemovedObserver, "message-server-removed");
     // Accounts load before add-ons; ours were parked as unavailable.
     MailServices.accounts.reactivateAccounts();

@@ -29,6 +29,28 @@ async function waitFor(check, timeoutMs = 30000) {
   }
 }
 
+function identityFor(email) {
+  const identity = MailServices.accounts.allIdentities.find(i => i.email == email);
+  if (!identity) {
+    throw new Error(`no identity ${email}`);
+  }
+  return identity;
+}
+
+/** A plain RFC 5322 file for sending (Thunderbird's own file has no Bcc header). */
+async function messageFile(args) {
+  const file = Services.dirsvc.get("TmpD", Ci.nsIFile);
+  file.append(`jmaptest-${Date.now()}.eml`);
+  const raw =
+    (args.resent ? `Resent-From: ${args.from}\r\nResent-To: ${args.to}\r\n` : "") +
+    `From: ${args.from}\r\nTo: ${args.to}\r\nSubject: ${args.subject}\r\n` +
+    `Date: ${new Date().toUTCString()}\r\nMessage-ID: <${Date.now()}.${Math.random()}@example.test>\r\n` +
+    `MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n` +
+    `${args.body ?? "Hello from Thunderbird."}\r\n`;
+  await IOUtils.writeUTF8(file.path, raw);
+  return file;
+}
+
 /** The main window's about:3pane once its folder pane is built, or null. */
 async function about3PaneReady() {
   const win = await waitFor(() => {
@@ -463,6 +485,139 @@ export const SCENARIOS = {
       identityCount: account.identities.length,
       accountOutgoingKey: server.getStringValue("jmap_outgoing_key"),
     };
+  },
+
+  /** An SMTP server nobody can reach, made the default: any fallback would land here. */
+  async "add-smtp-account"() {
+    const out = MailServices.outgoingServer;
+    const smtp = out.createServer("smtp");
+    smtp.QueryInterface(Ci.nsISmtpServer).hostname = "fallback.invalid";
+    out.defaultServer = smtp;
+    return { smtpKey: smtp.key };
+  },
+
+  /**
+   * Send through Thunderbird's own sending code from a JMAP identity.
+   * args: { from, to, bcc?, subject, mode?: "now" | "later" }
+   */
+  async send({ args }) {
+    const identity = identityFor(args.from);
+    if (args.mode == "later") {
+      let local = null;
+      try {
+        local = MailServices.accounts.localFoldersServer;
+      } catch (e) {
+        // No Local Folders yet (the Outbox lives there).
+      }
+      if (!local) {
+        MailServices.accounts.createLocalMailAccount();
+      }
+    }
+    const file = await messageFile(args);
+    const fields = Cc["@mozilla.org/messengercompose/composefields;1"].createInstance(Ci.nsIMsgCompFields);
+    fields.from = args.from;
+    fields.to = args.to;
+    fields.bcc = args.bcc ?? "";
+    fields.subject = args.subject;
+    const done = Promise.withResolvers();
+    const listener = {
+      QueryInterface: ChromeUtils.generateQI(["nsIMsgSendListener", "nsIMsgCopyServiceListener"]),
+      onStartSending() {},
+      onSendProgress() {},
+      onStatus() {},
+      onStopSending(msgId, status) {
+        if (args.mode != "later") {
+          done.resolve({ status });
+        }
+      },
+      onGetDraftFolderURI() {},
+      onSendNotPerformed(msgId, status) {
+        done.resolve({ status, notPerformed: true });
+      },
+      onTransportSecurityError() {},
+      // Queuing ("later") ends with the copy into the Outbox.
+      onStartCopy() {},
+      onProgress() {},
+      setMessageKey() {},
+      getMessageId() {
+        return "";
+      },
+      onStopCopy(status) {
+        if (args.mode == "later") {
+          done.resolve({ status });
+        }
+      },
+    };
+    const mode = args.mode == "later" ? Ci.nsIMsgSend.nsMsgQueueForLater : Ci.nsIMsgSend.nsMsgDeliverNow;
+    Cc["@mozilla.org/messengercompose/send;1"]
+      .createInstance(Ci.nsIMsgSend)
+      .sendMessageFile(identity, "", fields, file, false, false, mode, null, listener, null);
+    return Promise.race([done.promise, sleep(60000).then(() => ({ status: -1, timeout: true }))]);
+  },
+
+  /**
+   * Send the queued message from the Outbox the way the Send Later service
+   * does for each one (nsMsgSendUnsent). The service itself cannot find its
+   * Outbox in a headless run (NS_ERROR_UNEXPECTED, inside Thunderbird).
+   * args: { from }
+   */
+  async "send-unsent"({ args }) {
+    const identity = identityFor(args.from);
+    const local = MailServices.accounts.localFoldersServer.rootFolder;
+    const outbox = local.getFolderWithFlags(Ci.nsMsgFolderFlags.Queue) ?? local.getChildNamed("Unsent Messages");
+    const hdr = [...outbox.messages][0];
+    if (!hdr) {
+      throw new Error("the Outbox is empty");
+    }
+    const streamed = await streamViaService(outbox.getUriForMsg(hdr));
+    const file = Services.dirsvc.get("TmpD", Ci.nsIFile);
+    file.append(`jmaptest-unsent-${Date.now()}.eml`);
+    await IOUtils.writeUTF8(file.path, streamed.data);
+    const fields = Cc["@mozilla.org/messengercompose/composefields;1"].createInstance(Ci.nsIMsgCompFields);
+    fields.from = args.from;
+    fields.to = hdr.recipients;
+    fields.subject = hdr.mime2DecodedSubject;
+    const done = Promise.withResolvers();
+    const listener = {
+      QueryInterface: ChromeUtils.generateQI(["nsIMsgSendListener"]),
+      onStartSending() {},
+      onSendProgress() {},
+      onStatus() {},
+      onStopSending(msgId, status) {
+        done.resolve({ status });
+      },
+      onGetDraftFolderURI() {},
+      onSendNotPerformed(msgId, status) {
+        done.resolve({ status, notPerformed: true });
+      },
+      onTransportSecurityError() {},
+    };
+    Cc["@mozilla.org/messengercompose/send;1"]
+      .createInstance(Ci.nsIMsgSend)
+      .sendMessageFile(identity, "", fields, file, false, false, Ci.nsIMsgSend.nsMsgSendUnsent, null, listener, null);
+    return Promise.race([done.promise, sleep(60000).then(() => ({ status: -1, timeout: true }))]);
+  },
+
+  /**
+   * Call the identity's outgoing server as Thunderbird's sender does, with a
+   * listener that keeps the error text (Thunderbird would show it in a
+   * modal alert). args: { from, to, subject, resent? }
+   */
+  async "send-direct"({ args }) {
+    const identity = identityFor(args.from);
+    const server = MailServices.outgoingServer.getServerByIdentity(identity);
+    const file = await messageFile(args);
+    const recipients = MailServices.headerParser.parseEncodedHeaderW(args.to);
+    const done = Promise.withResolvers();
+    const listener = {
+      onSendStart() {},
+      onSendStop(serverURI, exitCode, secInfo, errorMessage) {
+        done.resolve({ exitCode, errorMessage: errorMessage ?? null });
+      },
+    };
+    server.sendMailMessage(file, recipients, [], identity, args.from, "", null, false, "", listener);
+    const outcome = await Promise.race([done.promise, sleep(60000).then(() => ({ exitCode: -1, errorMessage: "timeout" }))]);
+    return { serverType: server.type, ...outcome };
   },
 
   /** Make the jmap account look as Phase 1 left it: no outgoing server, one unlinked identity. */

@@ -23,4 +23,13 @@ export {
   emailGet,
   identityGet,
 } from "@thunderbird-jmap/jmap-client";
-export { SyncEngine, keywordsToFlags, roleToKind, toMailboxInfos } from "@thunderbird-jmap/mail-sync";
+export {
+  SyncEngine,
+  keywordsToFlags,
+  roleToKind,
+  toMailboxInfos,
+  sendDraft,
+  RedirectNotSupportedError,
+  SubmissionRefusedError,
+  SubmissionUncertainError,
+} from "@thunderbird-jmap/mail-sync";

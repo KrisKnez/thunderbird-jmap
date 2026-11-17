@@ -21,6 +21,12 @@ const OUTGOING_KEY = "jmap_outgoing_key";
 
 const branch = key => `mail.smtpserver.${key}.`;
 
+/** (incoming, { file, to, bcc, identity }) => Promise<void>, set by the registry. */
+let sendHandler = null;
+export function setSendHandler(handler) {
+  sendHandler = handler;
+}
+
 function listedKeys() {
   return Services.prefs.getCharPref("mail.smtpservers", "").split(",").filter(Boolean);
 }
@@ -141,10 +147,27 @@ export class JmapOutgoingServer {
     return this;
   }
 
+  /**
+   * Called by Thunderbird's sender. The file has no Bcc header; recipients
+   * and bccRecipients are msgIAddressObject lists. A failure's message is
+   * shown to the user by Thunderbird (exit code NS_ERROR_FAILURE).
+   */
   sendMailMessage(file, recipients, bccRecipients, identity, sender, password, statusListener, requestDSN, messageId, listener) {
     listener?.onSendStart(sendRequest());
-    Promise.resolve().then(() =>
-      listener?.onSendStop(this.serverURI, Cr.NS_ERROR_FAILURE, null, "Sending through JMAP is not ready yet.")
+    const finish = (status, message) => listener?.onSendStop(this.serverURI, status, null, message);
+    const incoming = this.incoming;
+    if (!sendHandler || !incoming) {
+      Promise.resolve().then(() => finish(Cr.NS_ERROR_FAILURE, "The JMAP account for this identity is not available."));
+      return;
+    }
+    sendHandler(incoming, {
+      file,
+      to: [...(recipients ?? [])].map(r => r.email),
+      bcc: [...(bccRecipients ?? [])].map(r => r.email),
+      identity,
+    }).then(
+      () => finish(Cr.NS_OK, null),
+      e => finish(Cr.NS_ERROR_FAILURE, e.message)
     );
   }
 }
