@@ -101,6 +101,21 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
     expect(folders.find(f => f.mailboxId == ids.reports)).toBeUndefined();
   });
 
+  test("adding the same account again is refused and changes nothing", async () => {
+    const again = await runScenario<Inspection>({
+      version,
+      profile,
+      scenario: "create-account",
+      args: accountArgs(),
+    });
+    expect(again.ok).toBe(false);
+    expect(again.error).toBe("This account is already set up.");
+    const after = await runScenario<Inspection>({ version, profile, scenario: "inspect", args: { noSync: true } });
+    expect(after.accounts).toHaveLength(1);
+    expect(after.jmapServerPrefCount).toBe(1);
+    expect(after.loginCount).toBe(1);
+  });
+
   test("the setup page creates an account", async () => {
     const fresh = await createProfile({ xpi: TEST_XPI, prefs: IN_PROCESS_PAGES });
     const r = await runScenario<{

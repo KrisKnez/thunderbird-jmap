@@ -249,6 +249,12 @@ export async function createAccount(details) {
     throw new JmapError("Use an https:// address.");
   }
 
+  // Core's own duplicate check compares ports, which are only set after
+  // creation; two servers with one URI would share folders and break both.
+  if (MailServices.accounts.findServer(username, url.hostname, TYPE)) {
+    throw new JmapError("This account is already set up.");
+  }
+
   const client = new JmapClient({ sessionUrl, credentials, fetch: fetchImpl });
   await client.getSession();
   const accountId = await client.primaryMailAccountId();
@@ -275,7 +281,7 @@ export async function createAccount(details) {
     const existing = await findLogin(origin, username);
     login = new LoginInfo(origin, null, REALM, username, secret, "", "");
     if (existing) {
-      Services.logins.modifyLogin(existing, login);
+      await Services.logins.modifyLoginAsync(existing, login);
     } else {
       await Services.logins.addLoginAsync(login);
     }
@@ -288,9 +294,7 @@ export async function createAccount(details) {
       MailServices.accounts.removeIncomingServer(server, true);
     }
     if (login) {
-      try {
-        Services.logins.removeLogin(login);
-      } catch {}
+      await Services.logins.removeLoginAsync(login).catch(() => {});
     }
     throw e;
   }
