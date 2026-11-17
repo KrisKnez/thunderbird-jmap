@@ -355,14 +355,16 @@ the exact UX, within the anti-goals.
 
 Each phase gets its own implementation plan.
 
-- **Phase 1 — read-only account:** scaffold (monorepo, mise tasks, Vitest,
+- **Phase 1 — read-only account (done):** scaffold (monorepo, mise tasks, Vitest,
   Stalwart dev server, Thunderbird download + headless harness);
   `jmap-client` (session/auth, batching, Mailbox/Email get/query/changes,
   blob download); account type (port of the spike); read-only sync
   (mailboxes → folders, headers + bodies, delta sync, on-open body fetch,
   Get Messages + polling); setup page.
-- **Phase 2 — everyday use:** sending (JMAP outgoing server, drafts) and
-  core write-back (read/flagged/tags, move, delete, error revert).
+- **Phase 2 — everyday use (done):** sending (JMAP outgoing server, drafts) and
+  core write-back (read/flagged/tags, move, delete, error revert). Design:
+  `2026-11-17-phase-2-two-way-account-design.md`; Redirect and copying
+  messages are not in it (copy moves to Phase 3).
 - **Phase 3 — complete mail:** push (SSE) and new-mail behavior
   (notifications, filters); copy, folder create/rename/delete.
 - **Phase 4 — hardening:** large mailboxes, network errors,
