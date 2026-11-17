@@ -18,4 +18,4 @@ Plans: `docs/superpowers/plans/`. Spike evidence: `docs/spikes/`.
 ## Commits
 
 - Conventional Commits (`feat(scope): …`, `fix: …`, `docs: …`).
-- Work on a feature branch, not `main`.
+- Commit directly to `main`. No feature branches.
