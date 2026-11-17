@@ -30,7 +30,11 @@ importers:
         specifier: workspace:*
         version: link:../test-support
 
-  packages/test-support: {}
+  packages/test-support:
+    dependencies:
+      '@thunderbird-jmap/jmap-client':
+        specifier: workspace:*
+        version: link:../jmap-client
 
 packages:
 

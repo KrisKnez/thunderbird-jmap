@@ -63,6 +63,35 @@ export class JmapClient {
     return body.methodResponses as MethodResponse[];
   }
 
+  /** Download a blob (by default as a raw message). */
+  async downloadBlob(accountId: string, blobId: string, type?: string): Promise<Uint8Array> {
+    const { downloadUrl } = await this.getSession();
+    const url = expandTemplate(downloadUrl, {
+      accountId,
+      blobId,
+      name: "message.eml",
+      type: type ?? "message/rfc822",
+    });
+    const res = await this.send(url);
+    return new Uint8Array(await res.arrayBuffer());
+  }
+
+  /** Upload a blob; returns the server's blob id. */
+  async uploadBlob(
+    accountId: string,
+    data: Uint8Array | string,
+    type: string
+  ): Promise<{ blobId: string; size: number; type: string }> {
+    const { uploadUrl } = await this.getSession();
+    const res = await this.send(expandTemplate(uploadUrl, { accountId }), {
+      method: "POST",
+      headers: { "Content-Type": type },
+      body: data as BodyInit,
+    });
+    const body = await res.json();
+    return { blobId: body.blobId, size: body.size, type: body.type };
+  }
+
   /** Run one method call; throws JmapMethodError for an error response. */
   async call<T>(name: string, args: Record<string, unknown>, using?: string[]): Promise<T> {
     const responses = await this.request([[name, args, "0"]], using);
@@ -79,4 +108,11 @@ export class JmapClient {
     }
     return result as T;
   }
+}
+
+/** Fill {name} placeholders of a URL template with URI-encoded values. */
+function expandTemplate(template: string, values: Record<string, string>): string {
+  return template.replace(/\{(\w+)\}/g, (match, key: string) =>
+    key in values ? encodeURIComponent(values[key]) : match
+  );
 }

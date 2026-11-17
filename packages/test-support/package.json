@@ -1,6 +1,6 @@
 {
   "name": "@thunderbird-jmap/test-support",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "license": "MPL-2.0",
   "type": "module",
@@ -10,5 +10,8 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@thunderbird-jmap/jmap-client": "workspace:*"
   }
 }

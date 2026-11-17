@@ -19,3 +19,15 @@ export {
   type Session,
 } from "./session.js";
 export { JmapClient, DEFAULT_USING } from "./client.js";
+export {
+  mailboxGet,
+  mailboxChanges,
+  emailChanges,
+  emailQuery,
+  emailGet,
+  EMAIL_HEADER_PROPERTIES,
+  type Mailbox,
+  type EmailAddress,
+  type EmailHeaderInfo,
+  type Changes,
+} from "./mail.js";
