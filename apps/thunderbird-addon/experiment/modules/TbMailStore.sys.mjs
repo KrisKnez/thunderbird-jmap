@@ -14,6 +14,12 @@ import { localFolderName } from "./FolderNames.sys.mjs";
 import { log } from "./Log.sys.mjs";
 
 const STATE_FILE = "jmap-sync-state.json";
+/**
+ * Set in a folder database's folder info once the folder holds a complete
+ * copy of its mailbox. A known folder without it lost its database (or was
+ * recreated), so the next sync must be a full one.
+ */
+const COMPLETE_MARKER = "jmapComplete";
 const F = Ci.nsMsgFolderFlags;
 const KIND_FLAGS = {
   inbox: F.Inbox,
@@ -67,9 +73,54 @@ export class TbMailStore {
     return this._state;
   }
 
+  /** Sync state; emailState is null when a folder needs a full resync. */
   async loadState() {
     const state = this.readStateSync();
-    return state ? structuredClone(state) : null;
+    if (!state) {
+      return null;
+    }
+    const copy = structuredClone(state);
+    if (copy.emailState) {
+      const incomplete = copy.mailboxes
+        .filter(m => localFolderName(m.id))
+        .map(m => this.folderForMailbox(m.id))
+        .filter(folder => !folder || !this._isComplete(folder));
+      if (incomplete.length) {
+        log.info(`${incomplete.length} folder(s) lost their local copy; full sync needed`);
+        this._index.clear();
+        copy.emailState = null;
+      }
+    }
+    return copy;
+  }
+
+  /** Every folder now holds a complete copy of its mailbox. */
+  async emailSyncComplete() {
+    for (const folder of this._folders()) {
+      if (folder.getStringProperty("jmapMailboxId")) {
+        this._markComplete(folder);
+      }
+    }
+  }
+
+  _isComplete(folder) {
+    try {
+      return folder.msgDatabase.dBFolderInfo.getCharProperty(COMPLETE_MARKER) == "1";
+    } catch (e) {
+      return false;
+    }
+  }
+
+  _markComplete(folder) {
+    try {
+      const db = folder.msgDatabase;
+      if (db.dBFolderInfo.getCharProperty(COMPLETE_MARKER) != "1") {
+        db.dBFolderInfo.setCharProperty(COMPLETE_MARKER, "1");
+        db.commit(Ci.nsMsgDBCommitType.kLargeCommit);
+      }
+    } catch (e) {
+      log.warn(`could not mark ${folder.URI} complete`, e);
+    }
   }
 
   async saveState(state) {
@@ -179,6 +230,7 @@ export class TbMailStore {
   async applyMailboxes(mailboxes) {
     const root = this._root();
     void root.subFolders; // make sure the saved tree was discovered
+    const known = new Set((this.readStateSync()?.mailboxes ?? []).map(m => m.id));
     const wanted = new Set(mailboxes.map(m => m.id));
     const gone = this._folders().filter(f => {
       const id = f.getStringProperty("jmapMailboxId");
@@ -191,7 +243,6 @@ export class TbMailStore {
       }
     }
 
-    let recreated = false;
     const byId = new Map();
     for (const mailbox of mailboxes) {
       const parent = mailbox.parentId ? byId.get(mailbox.parentId) : root;
@@ -204,10 +255,10 @@ export class TbMailStore {
       }
       let folder = this.folderForMailbox(mailbox.id);
       if (folder && folder.parent?.URI != parent.URI) {
-        // Moved to another parent: recreate it there, then resync its mail.
+        // Moved to another parent: recreate it there. It is left unmarked,
+        // so the next loadState asks for a full sync to refill it.
         this._removeFolder(folder);
         folder = null;
-        recreated = true;
       }
       if (folder) {
         this._applyAttributes(folder, mailbox);
@@ -215,6 +266,10 @@ export class TbMailStore {
         const result = this._ensureChild(parent, mailbox);
         folder = result.folder;
         if (result.created) {
+          if (!known.has(mailbox.id)) {
+            // A new mailbox: its mail arrives through ordinary changes.
+            this._markComplete(folder);
+          }
           MailServices.mfn.notifyFolderAdded(folder);
         }
       }
@@ -227,11 +282,7 @@ export class TbMailStore {
       emailState: null,
       mailboxes: [],
     };
-    await this.saveState({
-      ...state,
-      mailboxes,
-      ...(recreated ? { emailState: null } : {}),
-    });
+    await this.saveState({ ...state, mailboxes });
   }
 
   // --- messages -----------------------------------------------------------

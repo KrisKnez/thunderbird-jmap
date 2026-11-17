@@ -112,6 +112,18 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
     afterDelta = r;
   });
 
+  test("a folder whose database was lost (.msf deleted) gets its mail back", async () => {
+    const r = await runScenario<Inspection>({
+      version,
+      profile,
+      scenario: "lose-folder-db",
+      args: { folderPath: ["Inbox"] },
+    });
+    expect(r.ok, r.error).toBe(true);
+    expect(r.accounts[0].messages).toEqual(afterDelta.accounts[0].messages);
+    expect(folder(r.accounts[0], inbox)).toMatchObject({ total: 2, unread: 1 });
+  });
+
   test("with the server down, the account still loads its local mail and records the error", async () => {
     await s.stop();
     const r = await runScenario<Inspection>({ version, profile, scenario: "inspect", args: {} });

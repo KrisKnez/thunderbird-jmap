@@ -45,4 +45,11 @@ export interface MailStore {
   storeBody(mailboxId: string, emailId: string, raw: Uint8Array): Promise<boolean>;
   loadState(): Promise<SyncState | null>;
   saveState(s: SyncState): Promise<void>;
+  /**
+   * Optional: called after a sync completed successfully, so every local
+   * folder now holds a complete copy. A store can use this to detect folders
+   * whose local data was lost later and request a full sync by returning
+   * emailState null from loadState.
+   */
+  emailSyncComplete?(): Promise<void>;
 }

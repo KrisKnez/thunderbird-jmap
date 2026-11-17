@@ -115,6 +115,7 @@ export class SyncEngine {
     }
     state = { ...(await this.store.loadState())!, emailState };
     await this.store.saveState(state);
+    await this.store.emailSyncComplete?.();
     this.log("info", `sync done: ${JSON.stringify(result)}`);
     return result;
   }

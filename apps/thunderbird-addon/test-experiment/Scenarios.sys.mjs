@@ -105,7 +105,8 @@ function messagesOf(folder) {
   } catch (e) {
     // No database yet.
   }
-  return out;
+  // Database order changes when headers are re-added; reports compare sets.
+  return out.sort((a, b) => (a.jmapId < b.jmapId ? -1 : a.jmapId > b.jmapId ? 1 : 0));
 }
 
 /** Everything the integration tests assert on, for every jmap account. */
@@ -153,6 +154,22 @@ export async function report(registry) {
 }
 
 export const SCENARIOS = {
+  /**
+   * Lose a folder's database (as when a corrupt .msf is deleted): close it,
+   * delete the .msf, update the folder, and wait for the resulting sync.
+   * args: { folderPath: string[] }
+   */
+  async "lose-folder-db"({ registry, args }) {
+    const server = jmapServers()[0];
+    const folder = folderByPath(server, args.folderPath);
+    folder.ForceDBClosed();
+    await IOUtils.remove(folder.filePath.path + ".msf");
+    folder.updateFolder(null);
+    await sleep(100);
+    await registry.whenIdle(server);
+    return report(registry);
+  },
+
   /**
    * Parse the first message of a folder with MsgHdrToMimeMessage (what
    * global search indexing and message summaries use).
