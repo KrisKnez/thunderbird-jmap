@@ -7,11 +7,12 @@
 // listener sees every path that changes them (folder commands, the message
 // list, thread marking, auto-read, filters, extensions) and survives folder
 // databases being reopened (docs/spikes/2026-11-17-phase-2). Writes made by
-// sync produce no patch: the store records the server's keywords first.
+// sync produce no patch: the store records the server's keywords, and the
+// watcher ignores notifications while the store writes them.
 
 import { MailServices } from "resource:///modules/MailServices.sys.mjs";
 import { flagsToKeywords, keywordPatch } from "./core.sys.mjs";
-import { localFlagsOf, localOnlyOf, serverKeywordsOf } from "./TbMailStore.sys.mjs";
+import { isApplyingServerState, localFlagsOf, localOnlyOf, serverKeywordsOf } from "./TbMailStore.sys.mjs";
 import { log } from "./Log.sys.mjs";
 
 const WATCHED = new Set(["Status", "Flagged", "Keywords"]);
@@ -23,6 +24,9 @@ function isJmapFolder(folder) {
 
 /** Enqueue the patch that brings the server in line with this header, if any. */
 function check(hdr, enqueue) {
+  if (isApplyingServerState()) {
+    return;
+  }
   const emailId = hdr.getStringProperty("jmapId");
   if (!emailId) {
     return; // not on the server yet (e.g. a draft being saved)

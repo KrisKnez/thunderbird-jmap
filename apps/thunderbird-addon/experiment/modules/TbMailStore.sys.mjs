@@ -50,6 +50,16 @@ export function localOnlyOf(hdr) {
 }
 
 /** The header's local state as LocalFlags. */
+/**
+ * True while the store writes server state into headers. Those writes notify
+ * folder listeners synchronously, one field at a time; the change watcher
+ * ignores them, since a half-applied header looks like a local change.
+ */
+let applyingServerState = 0;
+export function isApplyingServerState() {
+  return applyingServerState > 0;
+}
+
 export function localFlagsOf(hdr) {
   const M = Ci.nsMsgMessageFlags;
   const junk = hdr.getStringProperty("junkscore");
@@ -481,13 +491,20 @@ export class TbMailStore {
 
   /** Update an existing header through the database so views are notified. */
   _updateFlags(db, hdr, serverFlags, email) {
-    const key = hdr.messageKey;
     const now = keywordList(email.keywords);
     // Tags and flags the server never had are local and kept.
     const flags = mergeServerFlags(serverFlags, now, storedServerKeywords(hdr), localFlagsOf(hdr));
-    // Record the server state first: change listeners compare against it,
-    // so the writes below are not taken for local changes to send back.
     hdr.setStringProperty(SERVER_KEYWORDS, JSON.stringify(now));
+    applyingServerState++;
+    try {
+      this._writeFlags(db, hdr, flags);
+    } finally {
+      applyingServerState--;
+    }
+  }
+
+  _writeFlags(db, hdr, flags) {
+    const key = hdr.messageKey;
     if (hdr.isRead != flags.read) db.markRead(key, flags.read, null);
     if (hdr.isFlagged != flags.flagged) db.markMarked(key, flags.flagged, null);
     const M = Ci.nsMsgMessageFlags;
