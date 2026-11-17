@@ -4,6 +4,13 @@
 
 export { startStalwart, STALWART_IMAGE, type StalwartInstance } from "./stalwart.js";
 export {
+  startMailflare,
+  MAILFLARE_COMMIT,
+  MAILPIT_IMAGE,
+  type MailflareInstance,
+  type CapturedMessage,
+} from "./mailflare.js";
+export {
   connect,
   mailboxIdByRole,
   createMailbox,

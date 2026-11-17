@@ -19,7 +19,7 @@ export interface StalwartInstance {
   stop(): Promise<void>;
 }
 
-function freePort(): Promise<number> {
+export function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = createServer();
     server.once("error", reject);

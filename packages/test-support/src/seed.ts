@@ -9,8 +9,9 @@ import { randomBytes } from "node:crypto";
 import { JmapClient, JmapError, mailboxGet } from "@thunderbird-jmap/jmap-client";
 import type { StalwartInstance } from "./stalwart.js";
 
+/** A JMAP client for a test server (Stalwart, or Mailflare with its API key as password). */
 export async function connect(
-  s: StalwartInstance
+  s: Pick<StalwartInstance, "sessionUrl" | "password"> & { username: string }
 ): Promise<{ client: JmapClient; accountId: string }> {
   const client = new JmapClient({
     sessionUrl: s.sessionUrl,
