@@ -4,6 +4,9 @@
 
 // JsAccount incoming server for the "jmap" type.
 
+import { log } from "./Log.sys.mjs";
+import { syncServer } from "./AccountRegistry.sys.mjs";
+
 export const TYPE = "jmap";
 
 export const ServerProps = {
@@ -41,4 +44,26 @@ JmapServer.prototype = {
   get localDatabaseType() {
     return "mailbox";
   },
+
+  /** "Get Messages": sync the whole account. */
+  getNewMessages(folder, msgWindow, urlListener) {
+    const server = this.delegator.get();
+    syncServer(server, "getNewMessages").then(
+      () => notifyStopped(urlListener, Cr.NS_OK),
+      () => notifyStopped(urlListener, Cr.NS_ERROR_FAILURE)
+    );
+  },
+
+  /** Periodic new-mail check. */
+  performBiff(msgWindow) {
+    syncServer(this.delegator.get(), "biff").catch(() => {});
+  },
 };
+
+function notifyStopped(urlListener, status) {
+  try {
+    urlListener?.OnStopRunningUrl(null, status);
+  } catch (e) {
+    log.warn("url listener failed", e);
+  }
+}

@@ -26,6 +26,11 @@ describe("keywordsToFlags", () => {
   });
 });
 
+test("server-internal $keywords are not tags, but Thunderbird's $labelN tags are", () => {
+  const flags = keywordsToFlags({ $hasnoattachment: true, $MDNSent: true, $label1: true, Work: true });
+  expect(flags.tags).toEqual(["$label1", "work"]);
+});
+
 describe("roleToKind", () => {
   test("known roles map, others are null", () => {
     expect(roleToKind("inbox")).toBe("inbox");

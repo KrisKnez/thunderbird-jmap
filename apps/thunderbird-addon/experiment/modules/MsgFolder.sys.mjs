@@ -82,6 +82,33 @@ JmapFolder.prototype = {
     this.delegator.get().NotifyFolderEvent("FolderLoaded");
   },
 
+  /**
+   * The C++ base cannot re-read counts from JS (and lacks this method on
+   * 153/160), so adjust the pending counters until the displayed counts match
+   * the database. The folder cache keeps base + pending across restarts.
+   */
+  updateSummaryTotals(force) {
+    const base = this.cppBase;
+    let info;
+    try {
+      info = base.msgDatabase.dBFolderInfo;
+    } catch (e) {
+      return;
+    }
+    const unreadDelta = info.numUnreadMessages - base.getNumUnread(false);
+    if (unreadDelta) {
+      base.changeNumPendingUnread(unreadDelta);
+    }
+    const totalDelta = info.numMessages - base.getTotalMessages(false);
+    if (totalDelta) {
+      base.changeNumPendingTotalMessages(totalDelta);
+    }
+  },
+
+  getNewMessages(msgWindow, urlListener) {
+    this.cppBase.server.getNewMessages(this.delegator.get(), msgWindow, urlListener);
+  },
+
   get baseMessageURI() {
     return MESSAGE_SCHEME + this.cppBase.URI.slice(TYPE.length);
   },

@@ -15,6 +15,15 @@ const SYSTEM_KEYWORDS = new Set([
   "$notjunk",
 ]);
 
+/**
+ * Is this keyword a user tag? Keywords starting with "$" are registered
+ * system keywords ($hasattachment, $mdnsent, …) and not tags, except
+ * Thunderbird's own default tags $label1…$label5.
+ */
+function isTag(keyword: string): boolean {
+  return !keyword.startsWith("$") || /^\$label\d+$/.test(keyword);
+}
+
 /** JMAP keywords (case-insensitive) → Thunderbird-style flags and tags. */
 export function keywordsToFlags(keywords: Record<string, true>): LocalFlags {
   const set = new Set(Object.keys(keywords).map(k => k.toLowerCase()));
@@ -25,7 +34,7 @@ export function keywordsToFlags(keywords: Record<string, true>): LocalFlags {
     forwarded: set.has("$forwarded"),
     draft: set.has("$draft"),
     junk: set.has("$junk") ? true : set.has("$notjunk") ? false : null,
-    tags: [...set].filter(k => !SYSTEM_KEYWORDS.has(k)).sort(),
+    tags: [...set].filter(k => !SYSTEM_KEYWORDS.has(k) && isTag(k)).sort(),
   };
 }
 

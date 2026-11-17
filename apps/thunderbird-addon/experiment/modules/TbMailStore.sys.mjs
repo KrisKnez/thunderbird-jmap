@@ -6,7 +6,7 @@
 //
 // Local folder names (and so file names) are derived from JMAP mailbox ids,
 // which never change; the visible name is the mailbox name, set as the
-// folder's pretty name. Renames therefore never move files.
+// folder's `name`. Renames therefore never move files.
 
 import { MailServices } from "resource:///modules/MailServices.sys.mjs";
 import { NetUtil } from "resource://gre/modules/NetUtil.sys.mjs";
@@ -31,6 +31,8 @@ export class TbMailStore {
     this._state = undefined;
     /** @type {Map<string, Map<string, number>>} mailboxId → (jmapId → msgKey) */
     this._index = new Map();
+    /** Folders whose database changed since the last saveState. */
+    this._touched = new Set();
   }
 
   // --- sync state ---------------------------------------------------------
@@ -71,9 +73,23 @@ export class TbMailStore {
   }
 
   async saveState(state) {
+    this._flushTouched();
     this._state = structuredClone(state);
     const file = this._stateFile();
     await IOUtils.writeJSON(file.path, state, { tmpPath: file.path + ".tmp" });
+  }
+
+  /** Commit changed folder databases and refresh their counts. */
+  _flushTouched() {
+    for (const folder of this._touched) {
+      try {
+        folder.msgDatabase.commit(Ci.nsMsgDBCommitType.kLargeCommit);
+        folder.updateSummaryTotals(true);
+      } catch (e) {
+        log.warn(`could not commit ${folder.URI}`, e);
+      }
+    }
+    this._touched.clear();
   }
 
   // --- folders ------------------------------------------------------------
@@ -254,12 +270,107 @@ export class TbMailStore {
     return out;
   }
 
-  async upsertMessage() {
-    throw new Error("TbMailStore.upsertMessage is not implemented yet");
+  /** MIME-encoded address list (header attributes are byte strings). */
+  _addressHeader(addresses) {
+    if (!addresses?.length) {
+      return "";
+    }
+    return MailServices.headerParser.makeMimeHeader(
+      addresses.map(a => MailServices.headerParser.makeMailboxObject(a.name ?? "", a.email))
+    );
   }
 
-  async removeMessage() {
-    throw new Error("TbMailStore.removeMessage is not implemented yet");
+  _flagBits(flags, email) {
+    const M = Ci.nsMsgMessageFlags;
+    let bits = 0;
+    if (flags.read) bits |= M.Read;
+    if (flags.flagged) bits |= M.Marked;
+    if (flags.answered) bits |= M.Replied;
+    if (flags.forwarded) bits |= M.Forwarded;
+    if (email.hasAttachment) bits |= M.Attachment;
+    return bits;
+  }
+
+  async upsertMessage(mailboxId, email, flags) {
+    const folder = this.folderForMailbox(mailboxId);
+    if (!folder) {
+      return;
+    }
+    const db = folder.msgDatabase;
+    const index = this._folderIndex(mailboxId);
+    const existingKey = index.get(email.id);
+    const existing = existingKey === undefined ? null : db.getMsgHdrForKey(existingKey);
+    this._touched.add(folder);
+    if (existing) {
+      this._updateFlags(db, existing, flags);
+      return;
+    }
+
+    const hdr = db.createNewHdr();
+    let subject = email.subject ?? "";
+    const re = /^(re\s*:\s*)+/i;
+    if (re.test(subject)) {
+      subject = subject.replace(re, "");
+      hdr.orFlags(Ci.nsMsgMessageFlags.HasRe);
+    }
+    hdr.subject = subject;
+    hdr.setStringProperty("charset", "UTF-8");
+    hdr.author = this._addressHeader(email.from);
+    hdr.recipients = this._addressHeader(email.to);
+    hdr.ccList = this._addressHeader(email.cc);
+    const received = Date.parse(email.receivedAt);
+    hdr.date = (Date.parse(email.sentAt ?? "") || received) * 1000;
+    hdr.setUint32Property("dateReceived", Math.floor(received / 1000));
+    if (email.messageId?.[0]) {
+      hdr.messageId = email.messageId[0];
+    }
+    const references = [...new Set([...(email.references ?? []), ...(email.inReplyTo ?? [])])];
+    if (references.length) {
+      hdr.setReferences(references.map(r => `<${r}>`).join(" "));
+    }
+    hdr.messageSize = email.size;
+    hdr.orFlags(this._flagBits(flags, email));
+    if (flags.tags.length) {
+      hdr.setStringProperty("keywords", flags.tags.join(" "));
+    }
+    if (flags.junk !== null) {
+      hdr.setStringProperty("junkscore", flags.junk ? "100" : "0");
+    }
+    hdr.setStringProperty("jmapId", email.id);
+    hdr.setStringProperty("jmapBlobId", email.blobId);
+    hdr.setStringProperty("jmapThreadId", email.threadId);
+    db.addNewHdrToDB(hdr, true);
+    index.set(email.id, hdr.messageKey);
+  }
+
+  /** Update an existing header through the database so views are notified. */
+  _updateFlags(db, hdr, flags) {
+    const key = hdr.messageKey;
+    if (hdr.isRead != flags.read) db.markRead(key, flags.read, null);
+    if (hdr.isFlagged != flags.flagged) db.markMarked(key, flags.flagged, null);
+    const M = Ci.nsMsgMessageFlags;
+    if (!!(hdr.flags & M.Replied) != flags.answered) db.markReplied(key, flags.answered, null);
+    if (!!(hdr.flags & M.Forwarded) != flags.forwarded) db.markForwarded(key, flags.forwarded, null);
+    const keywords = flags.tags.join(" ");
+    if ((hdr.getStringProperty("keywords") || "") != keywords) {
+      db.setStringPropertyByHdr(hdr, "keywords", keywords);
+    }
+  }
+
+  async removeMessage(mailboxId, emailId) {
+    const folder = this.folderForMailbox(mailboxId);
+    const index = this._folderIndex(mailboxId);
+    const key = index.get(emailId);
+    index.delete(emailId);
+    if (!folder || key === undefined) {
+      return;
+    }
+    const db = folder.msgDatabase;
+    const hdr = db.getMsgHdrForKey(key);
+    if (hdr) {
+      db.deleteHeader(hdr, null, false, true);
+      this._touched.add(folder);
+    }
   }
 
   async emailsMissingBody() {
