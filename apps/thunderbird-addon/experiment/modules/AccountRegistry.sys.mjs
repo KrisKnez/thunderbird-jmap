@@ -12,7 +12,7 @@ import {
   JmapClient,
   JmapError,
   SyncEngine,
-  discoverSessionUrl,
+  discoverSession,
 } from "./core.sys.mjs";
 import { log } from "./Log.sys.mjs";
 import { registerComponents, unregisterComponents } from "./Registration.sys.mjs";
@@ -32,6 +32,32 @@ const LoginInfo = Components.Constructor(
 );
 
 const fetchImpl = (url, init) => fetch(url, init);
+
+const lazy = {};
+ChromeUtils.defineESModuleGetters(lazy, { DNS: "resource:///modules/DNS.sys.mjs" });
+
+/** SRV records through Thunderbird's DNS module; none if the lookup fails. */
+async function resolveSrv(name) {
+  try {
+    const records = await lazy.DNS.srv(name);
+    return records.map(r => ({ priority: r.prio, weight: r.weight, host: r.host, port: r.port }));
+  } catch (e) {
+    log.info(`no SRV records for ${name}: ${e}`);
+    return [];
+  }
+}
+
+/**
+ * Discovery found the session through a DNS record pointing outside the
+ * email's domain. The message is the session URL; the setup page shows it
+ * and the user confirms by submitting it as the session URL.
+ */
+class ConfirmServerError extends Error {
+  constructor(url) {
+    super(url);
+    this.name = "ConfirmServer";
+  }
+}
 const BODY_PREF = "extensions.thunderbird-jmap.backgroundBodyDownload";
 
 let resolveReady;
@@ -241,9 +267,16 @@ export async function createAccount(details) {
       ? { kind: "bearer", token: secret }
       : { kind: "basic", username, password: secret };
 
-  const sessionUrl =
-    details.sessionUrl?.trim() ||
-    (await discoverSessionUrl(email, { fetch: fetchImpl }));
+  let sessionUrl = details.sessionUrl?.trim();
+  if (!sessionUrl) {
+    const found = await discoverSession(email, { fetch: fetchImpl, resolveSrv });
+    if (found.needsConfirmation) {
+      // DNS is not authenticated (RFC 8620 §8.3): no credentials go to a
+      // server outside the email's domain until the user has seen it.
+      throw new ConfirmServerError(found.url);
+    }
+    sessionUrl = found.url;
+  }
   const url = new URL(sessionUrl);
   if (url.protocol != "https:" && !(url.protocol == "http:" && LOCAL_HOSTS.has(url.hostname))) {
     throw new JmapError("Use an https:// address.");

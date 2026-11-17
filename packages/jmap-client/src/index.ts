@@ -15,8 +15,11 @@ export { authorizationHeader, type Credentials } from "./credentials.js";
 export {
   resolveUrlTemplate,
   discoverSessionUrl,
+  discoverSession,
   parseSession,
   type Session,
+  type SrvRecord,
+  type DiscoveredSession,
 } from "./session.js";
 export { JmapClient, DEFAULT_USING } from "./client.js";
 export {

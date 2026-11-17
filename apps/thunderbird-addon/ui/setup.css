@@ -143,6 +143,10 @@ button:disabled {
   color: var(--error);
 }
 
+#status[data-state="confirm"] {
+  font-weight: 600;
+}
+
 #status[data-state="success"] {
   color: var(--success);
   font-weight: 600;

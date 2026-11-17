@@ -13,6 +13,8 @@ const MESSAGES = {
   JmapNetworkError: "Couldn't reach the server. Check the address and your connection.",
   JmapHttpError:
     "Couldn't find a JMAP server for this address. Enter the session URL under Advanced.",
+  confirm: (host, domain) =>
+    `${domain} says its mail server is ${host}. If that is your mail provider, click Add account again.`,
 };
 
 const form = document.getElementById("setup-form");
@@ -84,6 +86,16 @@ form.addEventListener("submit", async event => {
     await browser.jmap.createAccount(details);
     showStatus("success", MESSAGES.success);
   } catch (error) {
+    const found = /^ConfirmServer:\s*(\S+)/.exec(String(error?.message ?? error));
+    if (found) {
+      // Found through the domain's DNS record, on a host outside the domain:
+      // show it, and adding again (with it as the session URL) confirms it.
+      form.sessionUrl.value = found[1];
+      document.getElementById("advanced").open = true;
+      showStatus("confirm", MESSAGES.confirm(new URL(found[1]).host, email.slice(email.lastIndexOf("@") + 1)));
+      setBusy(false);
+      return;
+    }
     showStatus("error", describeError(error));
     setBusy(false);
   }

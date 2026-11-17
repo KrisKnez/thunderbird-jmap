@@ -50,12 +50,35 @@ export function resolveUrlTemplate(template: string, sessionUrl: string): string
  * caller validates credentials there.
  */
 export async function discoverSessionUrl(input: string, opts: { fetch: FetchLike }): Promise<string> {
-  const trimmed = input.trim();
-  const start = HAS_SCHEME.test(trimmed)
-    ? trimmed
-    : `https://${trimmed.slice(trimmed.lastIndexOf("@") + 1)}/.well-known/jmap`;
+  return (await discoverSession(input, opts)).url;
+}
+
+const HOST_NAME = /^[a-z0-9-]+(\.[a-z0-9-]+)*$/;
+
+/** One DNS SRV record. */
+export interface SrvRecord {
+  priority: number;
+  weight: number;
+  host: string;
+  port: number;
+}
+
+export interface DiscoveredSession {
+  url: string;
+  /** "url": given by the user; "well-known": the email's domain; "srv": its DNS SRV record. */
+  via: "url" | "well-known" | "srv";
+  /**
+   * The session was found through an unauthenticated DNS record pointing
+   * outside the email's domain (RFC 8620 §8.3): ask the user before sending
+   * credentials there.
+   */
+  needsConfirmation: boolean;
+}
+
+/** Fetch a /.well-known/jmap (or session) URL without credentials; return where it led. */
+async function locate(fetch: FetchLike, start: string): Promise<string> {
   try {
-    const res = await checkedFetch(opts.fetch, start, {
+    const res = await checkedFetch(fetch, start, {
       method: "GET",
       headers: { Accept: "application/json" },
     });
@@ -66,6 +89,61 @@ export async function discoverSessionUrl(input: string, opts: { fetch: FetchLike
     }
     throw e;
   }
+}
+
+/**
+ * Find the JMAP session for a URL, email address or domain. A URL is used
+ * as given. Otherwise https://<domain>/.well-known/jmap comes first: the
+ * domain's TLS certificate vouches for wherever it redirects. If that
+ * fails and `resolveSrv` is given, the _jmap._tcp.<domain> SRV record
+ * (RFC 8620 §2.2) names hosts to try, by priority. No credentials are sent.
+ */
+export async function discoverSession(
+  input: string,
+  opts: { fetch: FetchLike; resolveSrv?: (name: string) => Promise<SrvRecord[]> }
+): Promise<DiscoveredSession> {
+  const trimmed = input.trim();
+  if (HAS_SCHEME.test(trimmed)) {
+    return { url: await locate(opts.fetch, trimmed), via: "url", needsConfirmation: false };
+  }
+  const domain = trimmed.slice(trimmed.lastIndexOf("@") + 1).toLowerCase();
+  let error: unknown;
+  try {
+    const url = await locate(opts.fetch, `https://${domain}/.well-known/jmap`);
+    return { url, via: "well-known", needsConfirmation: false };
+  } catch (e) {
+    error = e;
+  }
+
+  let records: SrvRecord[] = [];
+  try {
+    records = (await opts.resolveSrv?.(`_jmap._tcp.${domain}`)) ?? [];
+  } catch {
+    // No usable DNS answer: report the domain's own failure.
+  }
+  const targets = records
+    .map(r => ({ ...r, host: String(r.host ?? "").replace(/\.$/, "").toLowerCase() }))
+    // Plain host names only: "." (no JMAP service here) and anything that
+    // could change the URL's meaning ("/", "#", "@", ":"…) are skipped.
+    .filter(r => HOST_NAME.test(r.host))
+    .sort((a, b) => a.priority - b.priority || b.weight - a.weight);
+  for (const target of targets) {
+    const port = target.port && target.port != 443 ? `:${target.port}` : "";
+    const probe = new URL(`https://${target.host}${port}/.well-known/jmap`);
+    if (probe.hostname != target.host) {
+      continue;
+    }
+    try {
+      const url = await locate(opts.fetch, probe.href);
+      // An in-domain host proves itself with its TLS certificate, so it
+      // may redirect anywhere, as the domain's own /.well-known/jmap may.
+      const inDomain = probe.hostname == domain || probe.hostname.endsWith(`.${domain}`);
+      return { url, via: "srv", needsConfirmation: !inDomain };
+    } catch (e) {
+      error = e;
+    }
+  }
+  throw error;
 }
 
 const CORE = "urn:ietf:params:jmap:core";

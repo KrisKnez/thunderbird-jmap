@@ -7,6 +7,7 @@ import {
   resolveUrlTemplate,
   authorizationHeader,
   discoverSessionUrl,
+  discoverSession,
   JmapClient,
   JmapHttpError,
 } from "../src/index.js";
@@ -69,6 +70,112 @@ describe("discoverSessionUrl", () => {
     );
     await discoverSessionUrl("http://127.0.0.1:18080/.well-known/jmap", { fetch });
     expect(calls[0].url).toBe("http://127.0.0.1:18080/.well-known/jmap");
+  });
+});
+
+describe("discoverSession", () => {
+  type Srv = { priority: number; weight: number; host: string; port: number };
+  const resolver = (records: Srv[] | Error) => {
+    const asked: string[] = [];
+    const resolveSrv = async (name: string) => {
+      asked.push(name);
+      if (records instanceof Error) {
+        throw records;
+      }
+      return records;
+    };
+    return { resolveSrv, asked };
+  };
+  const notFound = () => new Response("", { status: 404 });
+  const unauthorized = (url: string) => json({ error: "Unauthorized" }, { status: 401, url });
+
+  test("the domain's own /.well-known/jmap is tried first and needs no confirmation", async () => {
+    const { fetch } = fakeFetch(() => json(STALWART_LIKE_SESSION, { url: "https://mail.example.net/jmap/session" }));
+    const { resolveSrv, asked } = resolver([{ priority: 0, weight: 1, host: "other.example.com", port: 443 }]);
+    const found = await discoverSession("me@example.org", { fetch, resolveSrv });
+    expect(found).toEqual({ url: "https://mail.example.net/jmap/session", via: "well-known", needsConfirmation: false });
+    expect(asked).toEqual([]);
+  });
+
+  test("without a /.well-known/jmap on the domain, its _jmap._tcp SRV record is used", async () => {
+    const { fetch, calls } = fakeFetch(url =>
+      url == "https://jmap.example.net/.well-known/jmap"
+        ? unauthorized("https://jmap.example.net/jmap/session")
+        : notFound()
+    );
+    const { resolveSrv, asked } = resolver([{ priority: 0, weight: 1, host: "jmap.example.net", port: 443 }]);
+    const found = await discoverSession("Me@Example.org", { fetch, resolveSrv });
+    expect(asked).toEqual(["_jmap._tcp.example.org"]);
+    expect(calls.map(c => c.url)).toEqual([
+      "https://example.org/.well-known/jmap",
+      "https://jmap.example.net/.well-known/jmap",
+    ]);
+    // DNS is not authenticated: a server outside the user's domain is confirmed first.
+    expect(found).toEqual({ url: "https://jmap.example.net/jmap/session", via: "srv", needsConfirmation: true });
+  });
+
+  test("an SRV target inside the email's domain needs no confirmation, and its port is kept", async () => {
+    const { fetch, calls } = fakeFetch(url =>
+      url.startsWith("https://mail.example.org:8443/") ? json(STALWART_LIKE_SESSION, { url }) : notFound()
+    );
+    const { resolveSrv } = resolver([{ priority: 0, weight: 1, host: "mail.example.org.", port: 8443 }]);
+    const found = await discoverSession("me@example.org", { fetch, resolveSrv });
+    expect(calls[1].url).toBe("https://mail.example.org:8443/.well-known/jmap");
+    expect(found).toEqual({
+      url: "https://mail.example.org:8443/.well-known/jmap",
+      via: "srv",
+      needsConfirmation: false,
+    });
+  });
+
+  test("SRV targets are tried by priority, skipping '.' and unreachable hosts", async () => {
+    const { fetch, calls } = fakeFetch(url => {
+      if (url.startsWith("https://a.example.net/")) {
+        throw new TypeError("connection refused");
+      }
+      return url.startsWith("https://b.example.net/") ? unauthorized("https://b.example.net/jmap/session") : notFound();
+    });
+    const { resolveSrv } = resolver([
+      { priority: 10, weight: 1, host: "b.example.net", port: 443 },
+      { priority: 0, weight: 1, host: ".", port: 0 },
+      { priority: 5, weight: 1, host: "a.example.net", port: 443 },
+    ]);
+    const found = await discoverSession("me@example.org", { fetch, resolveSrv });
+    expect(calls.map(c => new URL(c.url).host)).toEqual(["example.org", "a.example.net", "b.example.net"]);
+    expect(found.url).toBe("https://b.example.net/jmap/session");
+  });
+
+  test("SRV targets that are not plain host names are skipped, so they cannot pass as in-domain", async () => {
+    const { fetch, calls } = fakeFetch(url =>
+      url.startsWith("https://example.org/") ? notFound() : json(STALWART_LIKE_SESSION, { url })
+    );
+    const tricky = [
+      "evil.example.com/x.example.org",
+      "evil.example.com#.example.org",
+      "evil.example.com?.example.org",
+      "u@evil.example.com",
+      "evil.example.com:1.example.org",
+      "ev il.example.org",
+    ];
+    const { resolveSrv } = resolver(tricky.map((host, i) => ({ priority: i, weight: 1, host, port: 443 })));
+    await expect(discoverSession("me@example.org", { fetch, resolveSrv })).rejects.toBeInstanceOf(JmapHttpError);
+    expect(calls.map(c => c.url)).toEqual(["https://example.org/.well-known/jmap"]);
+  });
+
+  test("with no SRV records, or a failing DNS lookup, the domain's error is reported", async () => {
+    for (const records of [[], new Error("SERVFAIL")]) {
+      const { fetch } = fakeFetch(() => notFound());
+      const { resolveSrv } = resolver(records);
+      await expect(discoverSession("me@example.org", { fetch, resolveSrv })).rejects.toBeInstanceOf(JmapHttpError);
+    }
+  });
+
+  test("a URL is used as given, without a DNS lookup", async () => {
+    const { fetch } = fakeFetch(url => json(STALWART_LIKE_SESSION, { url }));
+    const { resolveSrv, asked } = resolver([]);
+    const found = await discoverSession("https://jmap.example.net/jmap/session", { fetch, resolveSrv });
+    expect(found).toEqual({ url: "https://jmap.example.net/jmap/session", via: "url", needsConfirmation: false });
+    expect(asked).toEqual([]);
   });
 });
 

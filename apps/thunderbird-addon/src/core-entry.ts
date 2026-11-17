@@ -12,6 +12,7 @@ export const CORE_VERSION: string = __CORE_VERSION__;
 export {
   JmapClient,
   discoverSessionUrl,
+  discoverSession,
   JmapError,
   JmapAuthError,
   JmapHttpError,
