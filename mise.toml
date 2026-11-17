@@ -28,3 +28,20 @@ run = "node scripts/stalwart.mjs up"
 [tasks."stalwart:down"]
 description = "Stop the dev Stalwart server"
 run = "node scripts/stalwart.mjs down"
+
+[tasks."tb:fetch"]
+description = "Download and verify the Thunderbird test matrix into .cache/thunderbird"
+run = "node scripts/fetch-thunderbird.mjs"
+
+[tasks.build]
+description = "Build dist/thunderbird-jmap.xpi"
+run = "node apps/thunderbird-addon/scripts/build.mjs"
+
+[tasks."build:test"]
+description = "Build dist/thunderbird-jmap-test.xpi (includes the test Experiment)"
+run = "node apps/thunderbird-addon/scripts/build.mjs --test"
+
+[tasks."tb:test"]
+description = "Run the headless Thunderbird integration tests"
+depends = ["build:test", "tb:fetch"]
+run = "pnpm --filter tests-thunderbird test"

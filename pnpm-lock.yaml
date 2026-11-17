@@ -24,6 +24,15 @@ importers:
         specifier: ^5.1.0
         version: 5.1.0(@types/node@26.6.6)(vite@8.3.8(@types/node@26.6.6)(esbuild@0.28.2))
 
+  apps/thunderbird-addon:
+    dependencies:
+      '@thunderbird-jmap/jmap-client':
+        specifier: workspace:*
+        version: link:../../packages/jmap-client
+      '@thunderbird-jmap/mail-sync':
+        specifier: workspace:*
+        version: link:../../packages/mail-sync
+
   packages/jmap-client:
     devDependencies:
       '@thunderbird-jmap/test-support':
@@ -45,6 +54,15 @@ importers:
       '@thunderbird-jmap/jmap-client':
         specifier: workspace:*
         version: link:../jmap-client
+
+  tests/thunderbird:
+    devDependencies:
+      '@thunderbird-jmap/jmap-client':
+        specifier: workspace:*
+        version: link:../../packages/jmap-client
+      '@thunderbird-jmap/test-support':
+        specifier: workspace:*
+        version: link:../../packages/test-support
 
 packages:
 

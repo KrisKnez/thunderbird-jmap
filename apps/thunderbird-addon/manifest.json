@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "JMAP for Thunderbird",
+  "description": "Adds JMAP mail accounts to Thunderbird.",
+  "version": "0.7.0",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "{ddb4c26d-c465-4ac4-a04d-eddc8783806f}",
+      "strict_min_version": "153.0"
+    }
+  },
+  "background": {
+    "scripts": [
+      "background.js"
+    ]
+  },
+  "experiment_apis": {
+    "jmap": {
+      "schema": "experiment/schema.json",
+      "parent": {
+        "scopes": [
+          "addon_parent"
+        ],
+        "paths": [
+          [
+            "jmap"
+          ]
+        ],
+        "script": "experiment/api.js",
+        "events": [
+          "startup"
+        ]
+      }
+    }
+  }
+}
