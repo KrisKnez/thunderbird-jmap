@@ -46,10 +46,13 @@ export interface MailStore {
   loadState(): Promise<SyncState | null>;
   saveState(s: SyncState): Promise<void>;
   /**
-   * Optional: called after a sync completed successfully, so every local
-   * folder now holds a complete copy. A store can use this to detect folders
-   * whose local data was lost later and request a full sync by returning
-   * emailState null from loadState.
+   * Optional: called after a sync completed successfully. `full` is true
+   * when every mailbox was listed in full, so every local folder now holds a
+   * complete copy; after a delta sync only folders the store created for
+   * new mailboxes are new. A store can use this to detect folders whose
+   * local data was lost later and request a full sync by returning
+   * emailState null from loadState. A folder that loses its data during a
+   * delta sync must not be taken as complete at its end.
    */
-  emailSyncComplete?(): Promise<void>;
+  emailSyncComplete?(o: { full: boolean }): Promise<void>;
 }

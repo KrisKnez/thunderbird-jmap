@@ -227,19 +227,21 @@ test("a server that clamps query pages still gets every email synced, and a full
   expect(store.in(inbox).size).toBe(20);
 }, 120_000);
 
-test("emailSyncComplete is called after a successful sync and not after a failed one", async () => {
+test("emailSyncComplete is called after a successful sync, telling whether it was full, and not after a failed one", async () => {
   class HookedStore extends FakeStore {
-    completed = 0;
-    async emailSyncComplete(): Promise<void> {
-      this.completed++;
+    completed: boolean[] = [];
+    async emailSyncComplete(o: { full: boolean }): Promise<void> {
+      this.completed.push(o.full);
     }
   }
   await importEmail(client, accountId, { mailboxIds: [inbox], ...subject("A") });
   const store = new HookedStore();
   await new SyncEngine({ client, store, accountId }).sync();
-  expect(store.completed).toBe(1);
+  expect(store.completed).toEqual([true]);
+  await new SyncEngine({ client, store, accountId }).sync();
+  expect(store.completed, "a delta sync is not full").toEqual([true, false]);
 
   const broken = failOn("Email/changes", new JmapNetworkError(new TypeError("fetch failed")));
   await expect(new SyncEngine({ client: broken, store, accountId }).sync()).rejects.toBeInstanceOf(JmapNetworkError);
-  expect(store.completed).toBe(1);
+  expect(store.completed).toEqual([true, false]);
 }, 60_000);
