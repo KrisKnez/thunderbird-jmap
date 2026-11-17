@@ -1,0 +1,63 @@
+diff --git a/apps/thunderbird-addon/experiment/modules/MsgFolder.sys.mjs b/apps/thunderbird-addon/experiment/modules/MsgFolder.sys.mjs
+index 549a418..e8f8a2d 100644
+--- a/apps/thunderbird-addon/experiment/modules/MsgFolder.sys.mjs
++++ b/apps/thunderbird-addon/experiment/modules/MsgFolder.sys.mjs
+@@ -12,6 +12,12 @@ import { TYPE } from "./IncomingServer.sys.mjs";
+ 
+ export const MESSAGE_SCHEME = "jmap-message";
+ 
++function spikeRecord(name, data) {
++  const calls = JSON.parse(Services.prefs.getStringPref("jmapspike.calls", "[]"));
++  calls.push({ name, ...data });
++  Services.prefs.setStringPref("jmapspike.calls", JSON.stringify(calls));
++}
++
+ export const FolderProps = {
+   baseContractID: "@mozilla.org/jacppmsgfolderdelegator;1",
+   baseInterfaces: [
+@@ -65,6 +71,21 @@ JmapFolder.prototype = {
+     return base.subFolders;
+   },
+ 
++  // ---- SPIKE: record write paths ----
++  copyMessages(srcFolder, messages, isMove, msgWindow, listener, isFolder, allowUndo) {
++    spikeRecord("copyMessages", { to: this.cppBase.name, from: srcFolder?.name, n: messages?.length, isMove, hasWindow: !!msgWindow, allowUndo });
++    listener?.OnStopCopy?.(Cr.NS_OK);
++  },
++  deleteMessages(messages, msgWindow, deleteStorage, isMove, listener, allowUndo) {
++    spikeRecord("deleteMessages", { folder: this.cppBase.name, n: messages?.length, deleteStorage, isMove, hasWindow: !!msgWindow, allowUndo });
++    listener?.OnStopCopy?.(Cr.NS_OK);
++  },
++  copyFileMessage(file, msgToReplace, isDraftOrTemplate, newMsgFlags, keywords, msgWindow, listener) {
++    spikeRecord("copyFileMessage", { folder: this.cppBase.name, isDraftOrTemplate, replaces: !!msgToReplace, keywords });
++    listener?.OnStopCopy?.(Cr.NS_OK);
++  },
++  // ---- end SPIKE ----
++
+   getDBFolderInfoAndDB(folderInfo) {
+     const db = this.cppBase.msgDatabase;
+     folderInfo.value = db.dBFolderInfo;
+diff --git a/apps/thunderbird-addon/experiment/modules/Registration.sys.mjs b/apps/thunderbird-addon/experiment/modules/Registration.sys.mjs
+index 8be4cb7..f0b43f9 100644
+--- a/apps/thunderbird-addon/experiment/modules/Registration.sys.mjs
++++ b/apps/thunderbird-addon/experiment/modules/Registration.sys.mjs
+@@ -10,6 +10,7 @@ import { JmapProtocolInfo } from "./ProtocolInfo.sys.mjs";
+ import { ServerProps, JmapServer } from "./IncomingServer.sys.mjs";
+ import { FolderProps, JmapFolder, MESSAGE_SCHEME } from "./MsgFolder.sys.mjs";
+ import { JmapMessageService } from "./MessageService.sys.mjs";
++import { SpikeOutgoingServer } from "./SpikeOutgoing.sys.mjs";
+ 
+ const registrar = Components.manager.QueryInterface(Ci.nsIComponentRegistrar);
+ 
+@@ -47,6 +48,11 @@ const COMPONENTS = [
+     contract: FolderProps.contractID,
+     factory: () => JSAccountUtils.jaFactory(FolderProps, JmapFolder),
+   },
++  {
++    cid: "{3d1f6a52-9b7e-4c8a-a0d4-5e2b7c9f1a63}",
++    contract: "@mozilla.org/messenger/outgoing/server;1?type=jmap",
++    factory: () => plainFactory(SpikeOutgoingServer),
++  },
+   {
+     cid: "{ffcf99c6-e5d4-4eff-9d5d-d4196153a16a}",
+     contract: `@mozilla.org/messenger/messageservice;1?type=${MESSAGE_SCHEME}`,

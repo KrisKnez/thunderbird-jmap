@@ -1,0 +1,99 @@
+{
+  "created": true,
+  "r": {
+    "ok": true,
+    "folder.markMessagesRead": [
+      "F:flag:Status:128->129",
+      "D:flags:128->129"
+    ],
+    "db.markRead (as thread marking does)": [
+      "F:flag:Status:129->128",
+      "D:flags:129->128"
+    ],
+    "hdr.markRead": [
+      "F:flag:Status:128->129",
+      "D:flags:128->129"
+    ],
+    "folder.markMessagesFlagged": [
+      "F:flag:Flagged:129->133",
+      "D:flags:129->133"
+    ],
+    "folder.addKeywordsToMessages": [
+      "D:prop:keywords",
+      "F:flag:Keywords:0->1"
+    ],
+    "folder.removeKeywordsFromMessages": [
+      "D:prop:keywords",
+      "F:flag:Keywords:1->0"
+    ],
+    "db.setStringPropertyByHdr(keywords)": [
+      "D:prop:keywords"
+    ],
+    "folder.setJunkScoreForMessages": [
+      "F:event:JunkStatusChanged",
+      "D:junkChanged",
+      "D:prop:junkscore",
+      "D:prop:junkscoreorigin"
+    ],
+    "select unread message (auto mark read)": [
+      "D:flags:128->129",
+      "F:flag:Status:128->129"
+    ],
+    "view toggleMessageRead": [
+      "D:flags:129->128",
+      "F:flag:Status:129->128"
+    ],
+    "view markThreadRead": [
+      "D:flags:128->129",
+      "F:flag:Status:128->129"
+    ],
+    "view flagMessages": [
+      "D:flags:129->133",
+      "F:flag:Flagged:129->133"
+    ],
+    "view junk": [
+      "D:prop:junkscoreorigin",
+      "D:junkChanged",
+      "F:event:JunkStatusChanged",
+      "D:prop:junkscore",
+      "N:junk:1"
+    ],
+    "filter MarkRead (run manually)": [
+      "ERR Cannot convert JavaScript object into an array arg 2 [nsIMsgFilterService.applyFilters]"
+    ],
+    "after DB closed+reopened: db.markRead": [
+      "F:flag:Status:132->133"
+    ],
+    "copyService move Inbox->Alpha": [],
+    "folder.deleteMessages": [],
+    "view cmd delete": [],
+    "copyService copyFileMessage (draft) into Drafts": [],
+    "overrideCalls": [
+      {
+        "name": "copyMessages",
+        "to": "Alpha",
+        "from": "Inbox",
+        "n": 1,
+        "isMove": true,
+        "hasWindow": false,
+        "allowUndo": true
+      },
+      {
+        "name": "deleteMessages",
+        "folder": "Inbox",
+        "n": 1,
+        "deleteStorage": false,
+        "isMove": false,
+        "hasWindow": false,
+        "allowUndo": true
+      },
+      {
+        "name": "copyFileMessage",
+        "folder": "Drafts",
+        "isDraftOrTemplate": true,
+        "replaces": false,
+        "keywords": ""
+      }
+    ]
+  }
+}

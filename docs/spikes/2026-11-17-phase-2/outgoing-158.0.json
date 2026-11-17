@@ -1,0 +1,154 @@
+{
+  "version": "158.0",
+  "1-create-account": {
+    "ok": true,
+    "accounts": [
+      {
+        "accountKey": "account1",
+        "folders": [
+          {
+            "path": [
+              "Deleted Items"
+            ],
+            "mailboxId": "b",
+            "flags": [
+              "Trash",
+              "Mail"
+            ],
+            "total": 0,
+            "unread": 0,
+            "inPane": true
+          },
+          {
+            "path": [
+              "Drafts"
+            ],
+            "mailboxId": "d",
+            "flags": [
+              "Drafts",
+              "Mail"
+            ],
+            "total": 0,
+            "unread": 0,
+            "inPane": true
+          },
+          {
+            "path": [
+              "Inbox"
+            ],
+            "mailboxId": "a",
+            "flags": [
+              "Inbox",
+              "Mail"
+            ],
+            "total": 0,
+            "unread": 0,
+            "inPane": true
+          },
+          {
+            "path": [
+              "Junk Mail"
+            ],
+            "mailboxId": "c",
+            "flags": [
+              "Junk",
+              "Mail"
+            ],
+            "total": 0,
+            "unread": 0,
+            "inPane": true
+          },
+          {
+            "path": [
+              "Sent Items"
+            ],
+            "mailboxId": "e",
+            "flags": [
+              "SentMail",
+              "Mail"
+            ],
+            "total": 0,
+            "unread": 0,
+            "inPane": true
+          }
+        ],
+        "messages": {
+          "Deleted Items": [],
+          "Drafts": [],
+          "Inbox": [],
+          "Junk Mail": [],
+          "Sent Items": []
+        },
+        "lastSyncError": null,
+        "loginAtStartUp": true
+      }
+    ],
+    "prefs": {
+      "timeFoundUnavailable": [
+        0
+      ]
+    },
+    "jmapServerPrefCount": 1,
+    "loginCount": 1
+  },
+  "2-spike-out-setup": {
+    "ok": true,
+    "jmapKey": "jmap1",
+    "smtpKey": "smtp1",
+    "via": "jmap1:jmap"
+  },
+  "3-spike-out-send": {
+    "ok": true,
+    "outcome": {
+      "status": 0
+    },
+    "sends": [
+      {
+        "key": "jmap1",
+        "file": "/tmp/nsemail.tmp",
+        "size": 103,
+        "recipients": "to@example.com",
+        "bcc": "hidden@example.com",
+        "identity": "admin@example.com",
+        "sender": "admin@example.com",
+        "messageId": ""
+      }
+    ]
+  },
+  "4-spike-out-check": {
+    "ok": true,
+    "list": [
+      "smtp1:smtp",
+      "jmap1:jmap"
+    ],
+    "identityKey": "jmap1",
+    "via": "jmap1:jmap"
+  },
+  "5-spike-out-check": {
+    "ok": true,
+    "list": [
+      "smtp1:smtp",
+      "jmap1:jmap"
+    ],
+    "identityKey": "jmap1",
+    "via": "jmap1:jmap"
+  },
+  "6-spike-out-send": {
+    "ok": true,
+    "outcome": {
+      "status": 0
+    },
+    "sends": [
+      {
+        "key": "jmap1",
+        "file": "/tmp/nsemail.tmp",
+        "size": 103,
+        "recipients": "to@example.com",
+        "bcc": "hidden@example.com",
+        "identity": "admin@example.com",
+        "sender": "admin@example.com",
+        "messageId": ""
+      }
+    ]
+  }
+}

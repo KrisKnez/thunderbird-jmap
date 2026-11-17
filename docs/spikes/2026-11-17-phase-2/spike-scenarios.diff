@@ -1,0 +1,216 @@
+diff --git a/apps/thunderbird-addon/test-experiment/Scenarios.sys.mjs b/apps/thunderbird-addon/test-experiment/Scenarios.sys.mjs
+index 4c24b27..39516a9 100644
+--- a/apps/thunderbird-addon/test-experiment/Scenarios.sys.mjs
++++ b/apps/thunderbird-addon/test-experiment/Scenarios.sys.mjs
+@@ -446,6 +446,211 @@ export const SCENARIOS = {
+    * noSync skips the scenario's own sync; waitIdle waits for syncs already
+    * under way (such as the one started at startup) to finish first.
+    */
++  // ---- SPIKE (Phase 2 experiment) ----
++  async "spike-out-setup"() {
++    const out = MailServices.outgoingServer;
++    const account = MailServices.accounts.findAccountForServer(jmapServers()[0]);
++    const identity = account.defaultIdentity;
++    // An SMTP server nobody can reach, made the default: any fallback lands here.
++    const smtp = out.createServer("smtp");
++    smtp.QueryInterface(Ci.nsISmtpServer).hostname = "fallback.invalid";
++    out.defaultServer = smtp;
++    const jmap = out.createServer("jmap");
++    identity.smtpServerKey = jmap.key;
++    const via = out.getServerByIdentity(identity);
++    return { jmapKey: jmap.key, smtpKey: smtp.key, via: `${via?.key}:${via?.type}` };
++  },
++
++  async "spike-out-check"(ctx) {
++    const out = MailServices.outgoingServer;
++    const identity = MailServices.accounts.findAccountForServer(jmapServers()[0]).defaultIdentity;
++    let list;
++    try {
++      list = out.servers.map(s => `${s.key}:${s.type}`);
++    } catch (e) {
++      list = `THROWS ${e}`;
++    }
++    const via = out.getServerByIdentity(identity);
++    const result = { list, identityKey: identity.smtpServerKey, via: `${via?.key}:${via?.type}` };
++    if (ctx.args?.recreate && via?.type != "jmap") {
++      // Recreate the dropped server under the same key.
++      const key = identity.smtpServerKey;
++      const keys = Services.prefs.getCharPref("mail.smtpservers", "").split(",").filter(k => k && k != key);
++      Services.prefs.setCharPref("mail.smtpservers", keys.join(","));
++      const again = out.createServer("jmap");
++      const via2 = out.getServerByIdentity(identity);
++      result.recreated = { key: again.key, via: `${via2?.key}:${via2?.type}` };
++    }
++    return result;
++  },
++
++  async "spike-out-send"() {
++    const identity = MailServices.accounts.findAccountForServer(jmapServers()[0]).defaultIdentity;
++    const file = Services.dirsvc.get("TmpD", Ci.nsIFile);
++    file.append("spike-send.eml");
++    const raw = "From: admin@example.com\r\nTo: to@example.com\r\nSubject: spike\r\nMessage-ID: <spike@example.com>\r\n\r\nhello\r\n";
++    await IOUtils.writeUTF8(file.path, raw);
++    const fields = Cc["@mozilla.org/messengercompose/composefields;1"].createInstance(Ci.nsIMsgCompFields);
++    fields.from = "admin@example.com";
++    fields.to = "to@example.com";
++    fields.bcc = "hidden@example.com";
++    fields.subject = "spike";
++    fields.fcc = "nocopy://";
++    Services.prefs.setStringPref("jmapspike.sends", "[]");
++    const done = Promise.withResolvers();
++    const listener = {
++      QueryInterface: ChromeUtils.generateQI(["nsIMsgSendListener"]),
++      onStartSending() {},
++      onSendProgress() {},
++      onStatus() {},
++      onStopSending(msgId, status) {
++        done.resolve({ status });
++      },
++      onGetDraftFolderURI() {},
++      onSendNotPerformed(msgId, status) {
++        done.resolve({ notPerformed: status });
++      },
++      onTransportSecurityError() {},
++    };
++    const send = Cc["@mozilla.org/messengercompose/send;1"].createInstance(Ci.nsIMsgSend);
++    send.sendMessageFile(identity, "", fields, file, false, false, Ci.nsIMsgSend.nsMsgDeliverNow, null, listener, null);
++    const outcome = await Promise.race([done.promise, sleep(20000).then(() => ({ timeout: true }))]);
++    return { outcome, sends: JSON.parse(Services.prefs.getStringPref("jmapspike.sends", "[]")) };
++  },
++  async "spike-paths"() {
++    const server = jmapServers()[0];
++    const inbox = folderByPath(server, ["Inbox"]);
++    const alpha = folderByPath(server, ["Alpha"]);
++    const events = [];
++    const folderListener = {
++      QueryInterface: ChromeUtils.generateQI(["nsIFolderListener"]),
++      onFolderAdded() {},
++      onMessageAdded() {},
++      onFolderRemoved() {},
++      onMessageRemoved() {},
++      onFolderPropertyChanged(item, prop) { events.push(`F:prop:${prop}`); },
++      onFolderIntPropertyChanged(item, prop) { if (!/Total|Unread|Size/.test(prop)) events.push(`F:int:${prop}`); },
++      onFolderBoolPropertyChanged(item, prop) { events.push(`F:bool:${prop}`); },
++      onFolderUnicharPropertyChanged(item, prop) { events.push(`F:uni:${prop}`); },
++      onFolderPropertyFlagChanged(item, prop, o, n) { events.push(`F:flag:${prop}:${o}->${n}`); },
++      onFolderEvent(item, ev) { events.push(`F:event:${ev}`); },
++    };
++    MailServices.mailSession.AddFolderListener(folderListener, Ci.nsIFolderListener.all);
++    const dbListener = {
++      QueryInterface: ChromeUtils.generateQI(["nsIDBChangeListener"]),
++      onHdrFlagsChanged(h, o, n) { events.push(`D:flags:${o}->${n}`); },
++      onHdrDeleted() { events.push("D:deleted"); },
++      onHdrAdded() { events.push("D:added"); },
++      onParentChanged() {},
++      onAnnouncerGoingAway() { events.push("D:goingAway"); },
++      onReadChanged() { events.push("D:readChanged"); },
++      onJunkScoreChanged() { events.push("D:junkChanged"); },
++      onHdrPropertyChanged(h, prop, pre) { if (!pre) events.push(`D:prop:${prop}`); },
++      onEvent(db, ev) { events.push(`D:event:${ev}`); },
++    };
++    inbox.msgDatabase.addListener(dbListener);
++    const notifyListener = {
++      QueryInterface: ChromeUtils.generateQI(["nsIMsgFolderListener"]),
++      msgsJunkStatusChanged(messages) { events.push(`N:junk:${messages.length}`); },
++      msgsDeleted(messages) { events.push(`N:deleted:${messages.length}`); },
++      msgsMoveCopyCompleted(isMove, src) { events.push(`N:moveCopy:${isMove}`); },
++    };
++    MailServices.mfn.addListener(notifyListener,
++      Ci.nsIMsgFolderNotificationService.msgsJunkStatusChanged |
++      Ci.nsIMsgFolderNotificationService.msgsDeleted |
++      Ci.nsIMsgFolderNotificationService.msgsMoveCopyCompleted);
++    const results = {};
++    const step = async (name, fn) => {
++      events.length = 0;
++      try { await fn(); } catch (e) { events.push(`ERR ${e.message}`); }
++      await sleep(300);
++      results[name] = [...new Set(events)];
++    };
++    const hdrs = () => [...inbox.messages];
++    const h = hdrs()[0];
++    await step("folder.markMessagesRead", () => inbox.markMessagesRead([h], !h.isRead));
++    await step("db.markRead (as thread marking does)", () => inbox.msgDatabase.markRead(h.messageKey, !h.isRead, null));
++    await step("hdr.markRead", () => h.markRead(!h.isRead));
++    await step("folder.markMessagesFlagged", () => inbox.markMessagesFlagged([h], !h.isFlagged));
++    await step("folder.addKeywordsToMessages", () => inbox.addKeywordsToMessages([h], "spiketag"));
++    await step("folder.removeKeywordsFromMessages", () => inbox.removeKeywordsFromMessages([h], "spiketag"));
++    await step("db.setStringPropertyByHdr(keywords)", () => inbox.msgDatabase.setStringPropertyByHdr(h, "keywords", "direct"));
++    await step("folder.setJunkScoreForMessages", () => inbox.setJunkScoreForMessages([h], "100", "user", -1));
++    const { about3Pane } = await about3PaneReady();
++    about3Pane.displayFolder(inbox);
++    await waitFor(() => about3Pane.gDBView?.rowCount > 0);
++    const unreadIndex = hdrs().findIndex(x => !x.isRead);
++    await step("select unread message (auto mark read)", async () => {
++      about3Pane.threadTree.selectedIndex = Math.max(unreadIndex, 0);
++      await sleep(2500);
++    });
++    await step("view toggleMessageRead", () => about3Pane.gDBView.doCommand(Ci.nsMsgViewCommandType.toggleMessageRead));
++    await step("view markThreadRead", () => about3Pane.gDBView.doCommand(Ci.nsMsgViewCommandType.markThreadRead));
++    await step("view flagMessages", () => about3Pane.gDBView.doCommand(Ci.nsMsgViewCommandType.flagMessages));
++    await step("view junk", () => about3Pane.gDBView.doCommand(Ci.nsMsgViewCommandType.junk));
++    await step("filter MarkRead (run manually)", () => {
++      const target = hdrs()[0];
++      if (target.isRead) inbox.msgDatabase.markRead(target.messageKey, false, null);
++      events.length = 0;
++      const list = inbox.getEditableFilterList(null);
++      const filter = list.createFilter("spike");
++      filter.enabled = true;
++      filter.filterType = Ci.nsMsgFilterType.Manual;
++      const term = filter.createTerm();
++      term.attrib = Ci.nsMsgSearchAttrib.Subject;
++      term.op = Ci.nsMsgSearchOp.Contains;
++      const value = term.value;
++      value.attrib = Ci.nsMsgSearchAttrib.Subject;
++      value.str = "";
++      term.value = value;
++      term.booleanAnd = true;
++      filter.appendTerm(term);
++      const action = filter.createAction();
++      action.type = Ci.nsMsgFilterAction.MarkRead;
++      filter.appendAction(action);
++      list.insertFilterAt(0, filter);
++      MailServices.filters.applyFilters(Ci.nsMsgFilterType.Manual, [target], inbox, null, null);
++      return sleep(1500);
++    });
++    inbox.ForceDBClosed();
++    void inbox.msgDatabase;
++    const h2 = hdrs()[0];
++    await step("after DB closed+reopened: db.markRead", () => inbox.msgDatabase.markRead(h2.messageKey, !h2.isRead, null));
++    // Write paths reaching the folder overrides.
++    Services.prefs.setStringPref("jmapspike.calls", "[]");
++    const copyListener = resolve => ({
++      QueryInterface: ChromeUtils.generateQI(["nsIMsgCopyServiceListener"]),
++      onStartCopy() {}, onProgress() {}, setMessageKey() {}, getMessageId() { return ""; },
++      onStopCopy() { resolve(); },
++    });
++    await step("copyService move Inbox->Alpha", () => Promise.race([
++      new Promise(res => MailServices.copy.copyMessages(inbox, [hdrs()[0]], alpha, true, copyListener(res), null, true)),
++      sleep(3000)]));
++    await step("folder.deleteMessages", () => inbox.deleteMessages([hdrs()[0]], null, false, false, null, true));
++    await step("view cmd delete", async () => {
++      about3Pane.displayFolder(inbox);
++      await waitFor(() => about3Pane.gDBView?.rowCount > 0);
++      about3Pane.threadTree.selectedIndex = 0;
++      await sleep(500);
++      about3Pane.gDBView.doCommand(Ci.nsMsgViewCommandType.deleteMsg);
++      await sleep(1000);
++    });
++    await step("copyService copyFileMessage (draft) into Drafts", async () => {
++      const drafts = server.rootFolder.getFolderWithFlags(Ci.nsMsgFolderFlags.Drafts);
++      const file = Services.dirsvc.get("TmpD", Ci.nsIFile);
++      file.append("spike-draft.eml");
++      await IOUtils.writeUTF8(file.path, "From: a@example.com\r\nSubject: draft\r\n\r\nx\r\n");
++      await Promise.race([
++        new Promise(res => MailServices.copy.copyFileMessage(file, drafts, null, true, 0, "", copyListener(res), null)),
++        sleep(3000)]);
++    });
++    results.overrideCalls = JSON.parse(Services.prefs.getStringPref("jmapspike.calls", "[]"));
++    MailServices.mailSession.RemoveFolderListener(folderListener);
++    MailServices.mfn.removeListener(notifyListener);
++    return results;
++  },
++  // ---- end SPIKE ----
++
+   async inspect({ registry, args }) {
+     if (args?.waitIdle) {
+       for (const server of jmapServers()) {
