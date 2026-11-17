@@ -58,6 +58,7 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
     authKind: "basic",
   });
   const inboxMessages = (r: Inspection) => r.accounts[0].messages["Inbox"];
+  let noBackgroundProfile: string;
 
   test("bodies download in the background, and a message opens and streams", async () => {
     const profile = await createProfile({ xpi: TEST_XPI });
@@ -92,6 +93,7 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
       xpi: TEST_XPI,
       prefs: { "extensions.thunderbird-jmap.backgroundBodyDownload": false },
     });
+    noBackgroundProfile = profile;
     const created = await runScenario<Inspection>({ version, profile, scenario: "create-account", args: accountArgs() });
     expect(created.ok, created.error).toBe(true);
     expect(inboxMessages(created).map(m => m.hasBody)).toEqual([false, false]);
@@ -109,5 +111,17 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
     const after = await runScenario<Inspection>({ version, profile, scenario: "inspect", args: { noSync: true } });
     expect(inboxMessages(after).find(m => m.subject == opened.headerSubject)?.hasBody).toBe(true);
     expect(inboxMessages(after).find(m => m.subject != opened.headerSubject)?.hasBody).toBe(false);
+  });
+
+  test("streaming a message that cannot be downloaded starts, then fails, the stream", async () => {
+    await s.stop();
+    const r = await runScenario<{ started: boolean; failed: boolean }>({
+      version,
+      profile: noBackgroundProfile,
+      scenario: "stream-missing",
+      args: { folderPath: ["Inbox"] },
+    });
+    expect(r.ok, r.error).toBe(true);
+    expect(r).toMatchObject({ started: true, failed: true });
   });
 });

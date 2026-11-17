@@ -32,6 +32,7 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
   let profile: string;
   let inbox: string;
   let alpha: string;
+  let misc: string;
   const ids: Record<string, string> = {};
   let afterDelta: Inspection;
 
@@ -40,6 +41,10 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
     ({ client, accountId } = await connect(s));
     inbox = await mailboxIdByRole(client, accountId, "inbox");
     alpha = await createMailbox(client, accountId, "Alpha");
+    misc = await createMailbox(client, accountId, "Misc");
+    for (const n of [1, 2]) {
+      await importEmail(client, accountId, { mailboxIds: [misc], subject: `No id ${n}`, body: `n${n}`, messageId: null });
+    }
     ids.a = await importEmail(client, accountId, {
       mailboxIds: [inbox],
       keywords: ["$seen", "$flagged"],
@@ -85,6 +90,12 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
     expect(bySubject(inboxMessages, "Tagged work")).toMatchObject({ read: false, flagged: false, tags: ["work"] });
     expect(folder(account, inbox)).toMatchObject({ total: 2, unread: 1 });
     expect(missingFromPane(account), "folders created while the window is open must show").toEqual([]);
+    // Without a Message-ID, each message still gets its own, so search and
+    // threading never take two of them for one.
+    const noId = messages(account, misc).map(m => m.messageId);
+    expect(noId).toHaveLength(2);
+    expect(noId.every(Boolean)).toBe(true);
+    expect(new Set(noId).size).toBe(2);
   });
 
   test("non-ASCII senders and subjects are stored correctly", async () => {
@@ -96,7 +107,7 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
   });
 
   test("server changes between runs are applied: read, move, new mail in two mailboxes, delete", async () => {
-    await setKeywords(client, accountId, ids.b, ["$seen", "Work"]);
+    await setKeywords(client, accountId, ids.b, ["$seen", "Work", "$junk"]);
     await moveEmail(client, accountId, ids.a, [alpha]);
     ids.c = await importEmail(client, accountId, { mailboxIds: [inbox, alpha], subject: "In both", body: "c" });
     await destroyEmail(client, accountId, ids.z);
@@ -109,7 +120,7 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
     const alphaMessages = messages(account, alpha);
     expect(inboxMessages.map(m => m.subject).sort()).toEqual(["In both", "Tagged work"]);
     expect(alphaMessages.map(m => m.subject).sort()).toEqual(["In both", "Seen and flagged"]);
-    expect(bySubject(inboxMessages, "Tagged work")?.read).toBe(true);
+    expect(bySubject(inboxMessages, "Tagged work")).toMatchObject({ read: true, tags: ["work"], junk: true });
     expect(folder(account, inbox)).toMatchObject({ total: 2, unread: 1 });
     expect(folder(account, alpha)).toMatchObject({ total: 2, unread: 1 });
     afterDelta = r;
@@ -125,6 +136,18 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
     expect(r.ok, r.error).toBe(true);
     expect(r.accounts[0].messages).toEqual(afterDelta.accounts[0].messages);
     expect(folder(r.accounts[0], inbox)).toMatchObject({ total: 2, unread: 1 });
+  });
+
+  test("a folder whose database is lost while a sync is running also gets its mail back", async () => {
+    const r = await runScenario<Inspection>({
+      version,
+      profile,
+      scenario: "lose-folder-db",
+      args: { folderPath: ["Alpha"], duringSync: true },
+    });
+    expect(r.ok, r.error).toBe(true);
+    expect(r.accounts[0].messages).toEqual(afterDelta.accounts[0].messages);
+    expect(folder(r.accounts[0], alpha)).toMatchObject({ total: 2, unread: 1 });
   });
 
   test("with the server down, the account still loads its local mail and records the error", async () => {

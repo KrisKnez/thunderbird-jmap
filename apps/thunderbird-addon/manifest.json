@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "JMAP for Thunderbird",
   "description": "Adds JMAP mail accounts to Thunderbird.",
-  "version": "0.12.9",
+  "version": "0.12.10",
   "browser_specific_settings": {
     "gecko": {
       "id": "{ddb4c26d-c465-4ac4-a04d-eddc8783806f}",

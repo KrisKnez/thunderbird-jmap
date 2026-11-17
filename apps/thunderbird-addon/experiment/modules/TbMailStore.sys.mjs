@@ -30,6 +30,27 @@ const KIND_FLAGS = {
   archive: F.Archive,
 };
 
+/**
+ * The mailbox id of a local folder ("" for none). A folder whose database
+ * was lost (its .msf deleted or found damaged) refuses to read properties
+ * until the database is opened again; opening it creates an empty one,
+ * which is then refilled by a full sync, as the folder is no longer marked
+ * complete.
+ */
+function mailboxIdOf(folder) {
+  try {
+    return folder.getStringProperty("jmapMailboxId");
+  } catch (e) {
+    try {
+      void folder.msgDatabase;
+      return folder.getStringProperty("jmapMailboxId");
+    } catch (e2) {
+      log.warn(`cannot read folder ${folder.URI}`, e2);
+      return "";
+    }
+  }
+}
+
 export class TbMailStore {
   /** @param {nsIMsgIncomingServer} server */
   constructor(server) {
@@ -94,10 +115,18 @@ export class TbMailStore {
     return copy;
   }
 
-  /** Every folder now holds a complete copy of its mailbox. */
-  async emailSyncComplete() {
+  /**
+   * After a full sync every folder holds a complete copy of its mailbox.
+   * After a delta sync nothing new is complete (folders for new mailboxes
+   * were marked when created), and a folder whose database was lost while
+   * the sync ran must stay unmarked so the next sync refills it.
+   */
+  async emailSyncComplete({ full } = { full: false }) {
+    if (!full) {
+      return;
+    }
     for (const folder of this._folders()) {
-      if (folder.getStringProperty("jmapMailboxId")) {
+      if (mailboxIdOf(folder)) {
         this._markComplete(folder);
       }
     }
@@ -155,7 +184,7 @@ export class TbMailStore {
 
   /** The local folder of a mailbox, or null. */
   folderForMailbox(mailboxId) {
-    return this._folders().find(f => f.getStringProperty("jmapMailboxId") == mailboxId) ?? null;
+    return this._folders().find(f => mailboxIdOf(f) == mailboxId) ?? null;
   }
 
   /** Recreate the folder tree from the saved mailbox list (root.subFolders getter). */
@@ -185,7 +214,7 @@ export class TbMailStore {
 
   _ensureChild(parent, mailbox) {
     let folder = parent.subFolders.find(
-      f => f.getStringProperty("jmapMailboxId") == mailbox.id
+      f => mailboxIdOf(f) == mailbox.id
     );
     let created = false;
     if (!folder) {
@@ -218,7 +247,7 @@ export class TbMailStore {
   }
 
   _removeFolder(folder) {
-    const id = folder.getStringProperty("jmapMailboxId");
+    const id = mailboxIdOf(folder);
     try {
       folder.parent.propagateDelete(folder, true);
     } catch (e) {
@@ -233,7 +262,7 @@ export class TbMailStore {
     const known = new Set((this.readStateSync()?.mailboxes ?? []).map(m => m.id));
     const wanted = new Set(mailboxes.map(m => m.id));
     const gone = this._folders().filter(f => {
-      const id = f.getStringProperty("jmapMailboxId");
+      const id = mailboxIdOf(f);
       return id && !wanted.has(id);
     });
     for (const folder of gone) {
@@ -316,7 +345,7 @@ export class TbMailStore {
   async mailboxesContaining(emailId) {
     const out = [];
     for (const folder of this._folders()) {
-      const id = folder.getStringProperty("jmapMailboxId");
+      const id = mailboxIdOf(folder);
       if (id && this._folderIndex(id).has(emailId)) {
         out.push(id);
       }
@@ -375,9 +404,9 @@ export class TbMailStore {
     const received = Date.parse(email.receivedAt);
     hdr.date = (Date.parse(email.sentAt ?? "") || received) * 1000;
     hdr.setUint32Property("dateReceived", Math.floor(received / 1000));
-    if (email.messageId?.[0]) {
-      hdr.messageId = email.messageId[0];
-    }
+    // Without a Message-ID, give each email its own (stable) one: search
+    // and threading would otherwise take such messages for one another.
+    hdr.messageId = email.messageId?.[0] || `${email.id}@jmap.invalid`;
     const references = [...new Set([...(email.references ?? []), ...(email.inReplyTo ?? [])])];
     if (references.length) {
       hdr.setReferences(references.map(r => `<${r}>`).join(" "));
@@ -409,6 +438,13 @@ export class TbMailStore {
     if ((hdr.getStringProperty("keywords") || "") != keywords) {
       db.setStringPropertyByHdr(hdr, "keywords", keywords);
     }
+    // $junk / $notjunk set on the server; with neither, keep the local verdict.
+    if (flags.junk !== null) {
+      const score = flags.junk ? "100" : "0";
+      if (hdr.getStringProperty("junkscore") != score) {
+        db.setStringPropertyByHdr(hdr, "junkscore", score);
+      }
+    }
   }
 
   async removeMessage(mailboxId, emailId) {
@@ -430,7 +466,7 @@ export class TbMailStore {
   async emailsMissingBody(limit) {
     const out = [];
     for (const folder of this._folders()) {
-      const mailboxId = folder.getStringProperty("jmapMailboxId");
+      const mailboxId = mailboxIdOf(folder);
       if (!mailboxId) {
         continue;
       }

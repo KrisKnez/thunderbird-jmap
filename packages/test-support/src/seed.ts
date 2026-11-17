@@ -78,19 +78,20 @@ export async function importEmail(
     to?: string;
     subject: string;
     body: string;
-    messageId?: string;
+    /** null: send no Message-ID header. */
+    messageId?: string | null;
     date?: Date;
   }
 ): Promise<string> {
   const date = o.date ?? new Date();
-  const messageId = o.messageId ?? `${randomBytes(8).toString("hex")}@example.com`;
+  const messageId = o.messageId === null ? null : (o.messageId ?? `${randomBytes(8).toString("hex")}@example.com`);
   const raw =
     [
       `From: ${encodeAddress(o.from ?? "Sender <sender@example.com>")}`,
       `To: ${encodeAddress(o.to ?? "admin@example.com")}`,
       `Subject: ${encodeWord(o.subject)}`,
       `Date: ${date.toUTCString()}`,
-      `Message-ID: <${messageId}>`,
+      ...(messageId ? [`Message-ID: <${messageId}>`] : []),
       "MIME-Version: 1.0",
       "Content-Type: text/plain; charset=utf-8",
       "Content-Transfer-Encoding: 8bit",

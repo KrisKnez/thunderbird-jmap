@@ -49,16 +49,19 @@ function folderByPath(server, path) {
 function streamViaService(uri) {
   return new Promise(resolve => {
     let data = "";
+    let started = false;
     const listener = {
       QueryInterface: ChromeUtils.generateQI(["nsIStreamListener"]),
-      onStartRequest() {},
+      onStartRequest() {
+        started = true;
+      },
       onDataAvailable(request, stream, offset, count) {
         data += NetUtil.readInputStreamToString(stream, count);
       },
       onStopRequest(request, status) {
         // The stream is bytes; message bodies here are UTF-8.
         const bytes = Uint8Array.from(data, c => c.charCodeAt(0));
-        resolve({ status, data: new TextDecoder().decode(bytes) });
+        resolve({ status, started, data: new TextDecoder().decode(bytes) });
       },
     };
     const service = MailServices.messageServiceFromURI(uri);
@@ -115,6 +118,8 @@ function messagesOf(folder) {
         tags: (hdr.getStringProperty("keywords") || "").split(" ").filter(Boolean).sort(),
         jmapId: hdr.getStringProperty("jmapId"),
         hasBody: !!(hdr.flags & Ci.nsMsgMessageFlags.Offline),
+        junk: { 100: true, 0: false }[hdr.getStringProperty("junkscore")] ?? null,
+        messageId: hdr.messageId,
       });
     }
   } catch (e) {
@@ -181,6 +186,25 @@ export const SCENARIOS = {
   async "lose-folder-db"({ registry, args }) {
     const server = jmapServers()[0];
     const folder = folderByPath(server, args.folderPath);
+    if (args.duringSync) {
+      // Lose it in the middle of a sync, as when a damaged .msf is found at
+      // startup while the startup sync runs: after the sync has read its
+      // state (every folder complete), before it finishes. Then sync again.
+      await registry.whenIdle(server);
+      const store = registry.runtimeFor(server).store;
+      const loadState = store.loadState;
+      store.loadState = async function () {
+        const state = await loadState.call(this);
+        store.loadState = loadState;
+        folder.ForceDBClosed();
+        await IOUtils.remove(folder.filePath.path + ".msf");
+        return state;
+      };
+      await registry.syncServer(server, "test").catch(() => {});
+      await registry.syncServer(server, "test").catch(() => {});
+      await registry.whenIdle(server);
+      return report(registry);
+    }
     folder.ForceDBClosed();
     await IOUtils.remove(folder.filePath.path + ".msf");
     folder.updateFolder(null);
@@ -387,6 +411,17 @@ export const SCENARIOS = {
       await sleep(100);
     }
     return report(registry);
+  },
+
+  /**
+   * Stream the first message in a folder whose body is not stored.
+   * args: { folderPath: string[] }
+   */
+  async "stream-missing"({ args }) {
+    const folder = folderByPath(jmapServers()[0], args.folderPath);
+    const hdr = [...folder.messages].find(h => !(h.flags & Ci.nsMsgMessageFlags.Offline));
+    const streamed = await streamViaService(folder.getUriForMsg(hdr));
+    return { started: streamed.started, failed: !Components.isSuccessCode(streamed.status) };
   },
 
   /** Make every jmap server look as created by a version without the startup check. */

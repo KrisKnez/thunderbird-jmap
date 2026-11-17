@@ -146,6 +146,8 @@ JmapMessageService.prototype = {
       fetchBody(folder, key).then(open, e => {
         log.error(`could not download ${uri}`, e);
         try {
+          // Stream listeners expect a start before every stop.
+          listener.onStartRequest(null);
           listener.onStopRequest(null, Cr.NS_ERROR_FAILURE);
         } catch (e2) {
           log.warn("stream listener failed", e2);

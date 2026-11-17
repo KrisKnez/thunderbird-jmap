@@ -21,6 +21,9 @@ export interface MessageReport {
   tags: string[];
   jmapId: string;
   hasBody: boolean;
+  /** From junkscore: true (junk), false (not junk), null (unclassified). */
+  junk: boolean | null;
+  messageId: string;
 }
 
 export interface AccountReport {
