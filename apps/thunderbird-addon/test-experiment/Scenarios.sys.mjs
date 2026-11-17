@@ -56,7 +56,9 @@ function streamViaService(uri) {
         data += NetUtil.readInputStreamToString(stream, count);
       },
       onStopRequest(request, status) {
-        resolve({ status, data });
+        // The stream is bytes; message bodies here are UTF-8.
+        const bytes = Uint8Array.from(data, c => c.charCodeAt(0));
+        resolve({ status, data: new TextDecoder().decode(bytes) });
       },
     };
     const service = MailServices.messageServiceFromURI(uri);

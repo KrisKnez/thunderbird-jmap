@@ -22,9 +22,10 @@ interface Opened {
   streamedContains: boolean;
 }
 
+// Bodies are sent as raw 8-bit UTF-8 (Content-Transfer-Encoding: 8bit).
 const BODIES: Record<string, string> = {
-  "First message": "Body of the first message 7731",
-  "Second message": "Body of the second message 9902",
+  "First message": "Body of the first message 7731: Čestitke s Hvara, šećer, žaba, đak.",
+  "Second message": "Body of the second message 9902: Dobar dan, gospođo Ćorić! Šaljem žute ruže.",
 };
 
 describe.each(TB_VERSIONS)("Thunderbird %s", version => {
