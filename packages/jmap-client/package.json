@@ -1,0 +1,17 @@
+{
+  "name": "@thunderbird-jmap/jmap-client",
+  "version": "0.2.0",
+  "private": true,
+  "license": "MPL-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p ."
+  },
+  "devDependencies": {
+    "@thunderbird-jmap/test-support": "workspace:*"
+  }
+}
