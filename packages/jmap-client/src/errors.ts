@@ -10,7 +10,11 @@ export class JmapError extends Error {
 /** The server rejected the credentials (HTTP 401/403). */
 export class JmapAuthError extends JmapError {
   override name = "JmapAuthError";
-  constructor(readonly status: number) {
+  /** @param url - the final URL that answered (after redirects), if known. */
+  constructor(
+    readonly status: number,
+    readonly url?: string
+  ) {
     super(`Authentication failed (HTTP ${status})`);
   }
 }

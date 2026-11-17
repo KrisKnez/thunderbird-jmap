@@ -8,6 +8,7 @@ import {
   authorizationHeader,
   discoverSessionUrl,
   JmapClient,
+  JmapHttpError,
 } from "../src/index.js";
 import { fakeFetch, json, STALWART_LIKE_SESSION } from "./fake-fetch.js";
 
@@ -46,22 +47,27 @@ describe("discoverSessionUrl", () => {
     const { fetch, calls } = fakeFetch(() =>
       json(STALWART_LIKE_SESSION, { url: "https://mail.example.org/jmap/session" })
     );
-    const url = await discoverSessionUrl("me@example.org", {
-      fetch,
-      credentials: { kind: "bearer", token: "t" },
-    });
+    const url = await discoverSessionUrl("me@example.org", { fetch });
     expect(calls[0].url).toBe("https://example.org/.well-known/jmap");
-    expect(new Headers(calls[0].init?.headers).get("Authorization")).toBe("Bearer t");
     expect(url).toBe("https://mail.example.org/jmap/session");
+  });
+  test("sends no credentials, so a cross-host redirect cannot be mistaken for a bad password", async () => {
+    const { fetch, calls } = fakeFetch(() =>
+      json({ type: "unauthorized" }, { status: 401, url: "https://api.example.net/jmap/session" })
+    );
+    const url = await discoverSessionUrl("me@example.org", { fetch });
+    expect(new Headers(calls[0].init?.headers).has("Authorization")).toBe(false);
+    expect(url).toBe("https://api.example.net/jmap/session");
+  });
+  test("a missing well-known endpoint is an HTTP error", async () => {
+    const { fetch } = fakeFetch(() => new Response("no", { status: 404 }));
+    await expect(discoverSessionUrl("me@example.org", { fetch })).rejects.toBeInstanceOf(JmapHttpError);
   });
   test("a URL is used as given", async () => {
     const { fetch, calls } = fakeFetch(() =>
       json(STALWART_LIKE_SESSION, { url: "http://127.0.0.1:18080/jmap/session" })
     );
-    await discoverSessionUrl("http://127.0.0.1:18080/.well-known/jmap", {
-      fetch,
-      credentials: { kind: "bearer", token: "t" },
-    });
+    await discoverSessionUrl("http://127.0.0.1:18080/.well-known/jmap", { fetch });
     expect(calls[0].url).toBe("http://127.0.0.1:18080/.well-known/jmap");
   });
 });

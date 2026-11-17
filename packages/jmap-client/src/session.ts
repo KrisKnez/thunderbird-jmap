@@ -2,8 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { authorizationHeader, type Credentials } from "./credentials.js";
-import { JmapError } from "./errors.js";
+import { JmapAuthError, JmapError } from "./errors.js";
 import { checkedFetch } from "./http.js";
 import type { FetchLike } from "./types.js";
 
@@ -45,22 +44,28 @@ export function resolveUrlTemplate(template: string, sessionUrl: string): string
 
 /**
  * Find the JMAP session URL. A URL is fetched as given; an email address or
- * bare domain starts at https://<domain>/.well-known/jmap. Redirects are
- * followed and the final URL is returned.
+ * bare domain starts at https://<domain>/.well-known/jmap. No credentials are
+ * sent: browsers drop Authorization on cross-origin redirects, so the
+ * redirect target (even one answering 401) is the session URL, and the
+ * caller validates credentials there.
  */
-export async function discoverSessionUrl(
-  input: string,
-  opts: { fetch: FetchLike; credentials: Credentials }
-): Promise<string> {
+export async function discoverSessionUrl(input: string, opts: { fetch: FetchLike }): Promise<string> {
   const trimmed = input.trim();
   const start = HAS_SCHEME.test(trimmed)
     ? trimmed
     : `https://${trimmed.slice(trimmed.lastIndexOf("@") + 1)}/.well-known/jmap`;
-  const res = await checkedFetch(opts.fetch, start, {
-    method: "GET",
-    headers: { Authorization: authorizationHeader(opts.credentials), Accept: "application/json" },
-  });
-  return res.url || start;
+  try {
+    const res = await checkedFetch(opts.fetch, start, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    });
+    return res.url || start;
+  } catch (e) {
+    if (e instanceof JmapAuthError && e.url) {
+      return e.url;
+    }
+    throw e;
+  }
 }
 
 const CORE = "urn:ietf:params:jmap:core";

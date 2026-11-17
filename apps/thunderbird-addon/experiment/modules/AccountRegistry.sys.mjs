@@ -243,7 +243,7 @@ export async function createAccount(details) {
 
   const sessionUrl =
     details.sessionUrl?.trim() ||
-    (await discoverSessionUrl(email, { fetch: fetchImpl, credentials }));
+    (await discoverSessionUrl(email, { fetch: fetchImpl }));
   const url = new URL(sessionUrl);
   if (url.protocol != "https:" && !(url.protocol == "http:" && LOCAL_HOSTS.has(url.hostname))) {
     throw new JmapError("Use an https:// address.");

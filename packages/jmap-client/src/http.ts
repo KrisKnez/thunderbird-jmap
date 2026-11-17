@@ -23,7 +23,7 @@ export async function checkedFetch(
     throw new JmapNetworkError(e);
   }
   if (res.status == 401 || res.status == 403) {
-    throw new JmapAuthError(res.status);
+    throw new JmapAuthError(res.status, res.url || url);
   }
   if (!res.ok) {
     let problem: { type?: unknown; detail?: unknown } | null = null;
