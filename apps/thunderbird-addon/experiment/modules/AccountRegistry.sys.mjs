@@ -18,6 +18,13 @@ import { log } from "./Log.sys.mjs";
 import { registerComponents, unregisterComponents } from "./Registration.sys.mjs";
 import { TbMailStore } from "./TbMailStore.sys.mjs";
 import { TYPE } from "./IncomingServer.sys.mjs";
+import {
+  createOutgoingServer,
+  deleteOutgoingServersFor,
+  ensureOutgoingServers,
+  parkOutgoingServers,
+} from "./OutgoingServer.sys.mjs";
+import { syncIdentities } from "./Identities.sys.mjs";
 
 export const coreVersion = CORE_VERSION;
 
@@ -97,6 +104,11 @@ const serverRemovedObserver = {
       // Not a server: use the key passed along.
     }
     runtimes.delete(key);
+    try {
+      deleteOutgoingServersFor(key);
+    } catch (e) {
+      log.warn(`could not remove the outgoing server of ${key}`, e);
+    }
     const saved = savedLogins.get(key);
     if (!saved) {
       return;
@@ -115,6 +127,11 @@ export function startup() {
     Services.obs.addObserver(serverRemovedObserver, "message-server-removed");
     // Accounts load before add-ons; ours were parked as unavailable.
     MailServices.accounts.reactivateAccounts();
+    try {
+      ensureOutgoingServers();
+    } catch (e) {
+      log.error("could not set up the outgoing servers", e);
+    }
     for (const server of jmapServers()) {
       // Core only clears this when the type loads at startup, which never
       // happens for an add-on type.
@@ -147,8 +164,26 @@ export function startup() {
   }
 }
 
+/**
+ * Called by the Experiment's onShutdown when Thunderbird quits: the
+ * outgoing servers are parked so that, until the add-on runs again, a JMAP
+ * identity cannot send through another account's server.
+ */
+export function appShutdown() {
+  try {
+    parkOutgoingServers();
+  } catch (e) {
+    log.error("could not park the outgoing servers", e);
+  }
+}
+
 /** Called by the Experiment's onShutdown when the add-on is disabled/updated. */
 export function shutdown() {
+  try {
+    parkOutgoingServers();
+  } catch (e) {
+    log.error("could not park the outgoing servers", e);
+  }
   Services.obs.removeObserver(serverRemovedObserver, "message-server-removed");
   unregisterComponents();
   runtimes.clear();
@@ -234,6 +269,11 @@ export function syncServer(server, reason) {
       try {
         const result = await (await runtime.getEngine()).sync();
         runtime.lastSyncError = null;
+        try {
+          await syncIdentities(server, await runtime.getClient(), server.getStringValue("jmap_account_id"));
+        } catch (e) {
+          log.warn(`identity sync of ${server.key} failed`, e);
+        }
         if (Services.prefs.getBoolPref(BODY_PREF, true)) {
           downloadBodies(server).catch(() => {});
         }
@@ -357,8 +397,11 @@ export async function createAccount(details) {
     server.loginAtStartUp = true;
     server.setBoolValue(STARTUP_DEFAULT_APPLIED, true);
 
+    const outgoingKey = createOutgoingServer(server);
     const identity = MailServices.accounts.createIdentity();
     identity.email = email;
+    identity.smtpServerKey = outgoingKey;
+    identity.doFcc = false;
     account = MailServices.accounts.createAccount();
     account.addIdentity(identity);
     account.incomingServer = server;
@@ -374,6 +417,13 @@ export async function createAccount(details) {
     Services.prefs.savePrefFile(null);
   } catch (e) {
     log.error("account creation failed; rolling back", e);
+    if (server) {
+      try {
+        deleteOutgoingServersFor(server.key);
+      } catch (e2) {
+        log.warn("could not remove the outgoing server", e2);
+      }
+    }
     if (account) {
       MailServices.accounts.removeAccount(account, true);
     } else if (server) {

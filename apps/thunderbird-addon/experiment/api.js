@@ -37,6 +37,7 @@
 
     onShutdown(isAppShutdown) {
       if (isAppShutdown) {
+        registry().appShutdown();
         return;
       }
       registry().shutdown();

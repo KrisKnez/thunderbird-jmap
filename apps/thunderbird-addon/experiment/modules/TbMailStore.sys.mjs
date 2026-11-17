@@ -37,7 +37,7 @@ const KIND_FLAGS = {
  * which is then refilled by a full sync, as the folder is no longer marked
  * complete.
  */
-function mailboxIdOf(folder) {
+export function mailboxIdOf(folder) {
   try {
     return folder.getStringProperty("jmapMailboxId");
   } catch (e) {

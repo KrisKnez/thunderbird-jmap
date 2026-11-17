@@ -21,5 +21,6 @@ export {
   JmapNetworkError,
   mailboxGet,
   emailGet,
+  identityGet,
 } from "@thunderbird-jmap/jmap-client";
 export { SyncEngine, keywordsToFlags, roleToKind, toMailboxInfos } from "@thunderbird-jmap/mail-sync";

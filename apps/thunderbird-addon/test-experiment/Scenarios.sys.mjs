@@ -6,6 +6,7 @@
 
 import { MailServices } from "resource:///modules/MailServices.sys.mjs";
 import { NetUtil } from "resource://gre/modules/NetUtil.sys.mjs";
+import { MailUtils } from "resource:///modules/MailUtils.sys.mjs";
 import { setTimeout } from "resource://gre/modules/Timer.sys.mjs";
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -422,6 +423,69 @@ export const SCENARIOS = {
     const hdr = [...folder.messages].find(h => !(h.flags & Ci.nsMsgMessageFlags.Offline));
     const streamed = await streamViaService(folder.getUriForMsg(hdr));
     return { started: streamed.started, failed: !Components.isSuccessCode(streamed.status) };
+  },
+
+  /** The jmap account's JMAP identities and how each would send. */
+  async "outgoing-state"({ registry }) {
+    for (const server of jmapServers()) {
+      await registry.whenIdle(server).catch(() => {});
+    }
+    const server = jmapServers()[0];
+    const account = MailServices.accounts.findAccountForServer(server);
+    const out = MailServices.outgoingServer;
+    const pathOf = uri => {
+      const folder = uri ? MailUtils.getExistingFolder(uri) : null;
+      return folder ? folderPath(folder) : null;
+    };
+    const identities = account.identities
+      .filter(i => i.getCharAttribute("jmap_identity_id"))
+      .map(i => {
+        let via = null;
+        try {
+          via = out.getServerByIdentity(i);
+        } catch (e) {
+          // The outgoing list failed to load.
+        }
+        return {
+          email: i.email,
+          jmapIdentityId: i.getCharAttribute("jmap_identity_id"),
+          outgoingKey: i.smtpServerKey,
+          outgoingType: via?.type ?? null,
+          outgoingHost: via?.serverURI?.host ?? null,
+          doFcc: i.doFcc,
+          draftFolderPath: pathOf(i.draftsFolderURI),
+          fccFolderPath: pathOf(i.fccFolderURI),
+        };
+      })
+      .sort((a, b) => (a.email < b.email ? -1 : 1));
+    return {
+      identities,
+      identityCount: account.identities.length,
+      accountOutgoingKey: server.getStringValue("jmap_outgoing_key"),
+    };
+  },
+
+  /** Make the jmap account look as Phase 1 left it: no outgoing server, one unlinked identity. */
+  async "as-phase-1-account"() {
+    const server = jmapServers()[0];
+    const account = MailServices.accounts.findAccountForServer(server);
+    const out = MailServices.outgoingServer;
+    const key = server.getStringValue("jmap_outgoing_key");
+    const outgoing = key ? out.getServerByKey(key) : null;
+    if (outgoing) {
+      out.deleteServer(outgoing);
+    }
+    server.setStringValue("jmap_outgoing_key", "");
+    const keep = account.defaultIdentity;
+    for (const identity of [...account.identities]) {
+      if (identity != keep) {
+        account.removeIdentity(identity);
+      }
+    }
+    keep.setCharAttribute("jmap_identity_id", "");
+    keep.smtpServerKey = "";
+    keep.doFcc = true;
+    return { kept: keep.email };
   },
 
   /** Make every jmap server look as created by a version without the startup check. */

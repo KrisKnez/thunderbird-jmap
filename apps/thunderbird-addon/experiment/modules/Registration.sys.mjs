@@ -10,6 +10,7 @@ import { JmapProtocolInfo } from "./ProtocolInfo.sys.mjs";
 import { ServerProps, JmapServer } from "./IncomingServer.sys.mjs";
 import { FolderProps, JmapFolder, MESSAGE_SCHEME } from "./MsgFolder.sys.mjs";
 import { JmapMessageService } from "./MessageService.sys.mjs";
+import { JmapOutgoingServer } from "./OutgoingServer.sys.mjs";
 
 const registrar = Components.manager.QueryInterface(Ci.nsIComponentRegistrar);
 
@@ -46,6 +47,11 @@ const COMPONENTS = [
     cid: "{73fe0dd1-2f8c-4142-bde4-9104d1c2ade7}",
     contract: FolderProps.contractID,
     factory: () => JSAccountUtils.jaFactory(FolderProps, JmapFolder),
+  },
+  {
+    cid: "{b6a1f3d2-6c8e-4f0a-9d27-3e5c1a8b4f60}",
+    contract: "@mozilla.org/messenger/outgoing/server;1?type=jmap",
+    factory: () => plainFactory(JmapOutgoingServer),
   },
   {
     cid: "{ffcf99c6-e5d4-4eff-9d5d-d4196153a16a}",
