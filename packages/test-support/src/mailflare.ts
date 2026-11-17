@@ -104,7 +104,7 @@ export async function startMailflare(o: { localParts?: string[] } = {}): Promise
   const mailpitUrl = `http://127.0.0.1:${mailpitPort}`;
 
   const stop = async () => {
-    await podman("rm", "-f", mailflare, mailpit).catch(() => "");
+    await podman("rm", "-f", "-v", mailflare, mailpit).catch(() => "");
     await podman("network", "rm", "-f", network).catch(() => "");
   };
   const sql = (statement: string) =>

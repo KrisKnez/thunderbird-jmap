@@ -15,7 +15,11 @@ import {
   type JmapClient,
   type Mailbox,
 } from "@thunderbird-jmap/jmap-client";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { connect, startMailflare, type MailflareInstance } from "@thunderbird-jmap/test-support";
+
+const podman = async (...args: string[]) => (await promisify(execFile)("podman", args)).stdout.trim();
 
 /** The mailbox with `role` in the folder tree of `address` (Mailflare: one tree per address). */
 function roleMailbox(list: Mailbox[], address: string, role: string): Mailbox {
@@ -109,3 +113,18 @@ test("setSending(false) makes Mailflare refuse to send", async () => {
     await mf.stop();
   }
 }, 900_000);
+
+test("stopping Mailflare removes its volume too", async () => {
+  const mf = await startMailflare({ localParts: ["me"] });
+  let volumes: string[] = [];
+  try {
+    const port = new URL(mf.baseUrl).port;
+    const line = (await podman("ps", "--format", "{{.Names}} {{.Ports}}")).split("\n").find(l => l.includes(`:${port}->`))!;
+    volumes = (await podman("inspect", line.split(" ")[0], "--format", "{{range .Mounts}}{{.Name}} {{end}}")).split(" ").filter(Boolean);
+    expect(volumes.length).toBeGreaterThan(0);
+  } finally {
+    await mf.stop();
+  }
+  const left = await podman("volume", "ls", "-q");
+  expect(volumes.filter(v => left.includes(v))).toEqual([]);
+}, 600_000);

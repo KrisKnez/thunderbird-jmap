@@ -70,7 +70,7 @@ export async function startStalwart(opts: { password?: string } = {}): Promise<S
     STALWART_IMAGE,
   ]);
   const stop = async () => {
-    await run("podman", ["rm", "-f", name]).catch(() => {});
+    await run("podman", ["rm", "-f", "-v", name]).catch(() => {});
   };
   const baseUrl = `http://127.0.0.1:${port}`;
   try {

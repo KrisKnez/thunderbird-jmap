@@ -17,12 +17,12 @@ const podman = (...args) => execFileSync("podman", args, { stdio: "inherit" });
 
 const cmd = process.argv[2];
 if (cmd == "up") {
-  podman("rm", "-f", NAME);
+  podman("rm", "-f", "-v", NAME);
   podman("run", "-d", "--name", NAME, "-p", `127.0.0.1:${PORT}:8080`,
     "-e", `STALWART_RECOVERY_ADMIN=admin:${PASSWORD}`, IMAGE);
   console.log(`Stalwart: http://127.0.0.1:${PORT}/jmap/session (admin / ${PASSWORD})`);
 } else if (cmd == "down") {
-  podman("rm", "-f", NAME);
+  podman("rm", "-f", "-v", NAME);
 } else {
   console.error("usage: stalwart.mjs up|down");
   process.exit(2);
