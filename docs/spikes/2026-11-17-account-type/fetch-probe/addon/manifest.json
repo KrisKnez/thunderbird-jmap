@@ -1,0 +1,4 @@
+{ "manifest_version": 3, "name": "probe", "version": "0.0.1",
+  "browser_specific_settings": { "gecko": { "id": "probe@example.invalid", "strict_min_version": "128.0" } },
+  "experiment_apis": { "probe": { "schema": "api/schema.json",
+    "parent": { "scopes": ["addon_parent"], "paths": [["probe"]], "script": "api/implementation.js", "events": ["startup"] } } } }

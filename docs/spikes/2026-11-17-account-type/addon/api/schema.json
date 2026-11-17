@@ -1,0 +1,13 @@
+[
+  {
+    "namespace": "jmapSpike",
+    "functions": [
+      {
+        "name": "ping",
+        "type": "function",
+        "async": true,
+        "parameters": []
+      }
+    ]
+  }
+]
