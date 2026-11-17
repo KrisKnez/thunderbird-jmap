@@ -139,3 +139,21 @@ export function moveEmail(client: JmapClient, accountId: string, emailId: string
 export function destroyEmail(client: JmapClient, accountId: string, emailId: string) {
   return emailSet(client, accountId, { destroy: [emailId] });
 }
+
+export async function renameMailbox(client: JmapClient, accountId: string, mailboxId: string, name: string) {
+  const res = await client.call<any>("Mailbox/set", { accountId, update: { [mailboxId]: { name } } });
+  if (res.notUpdated && Object.keys(res.notUpdated).length) {
+    throw new JmapError(`Mailbox/set update failed: ${JSON.stringify(res.notUpdated)}`);
+  }
+}
+
+export async function destroyMailbox(client: JmapClient, accountId: string, mailboxId: string) {
+  const res = await client.call<any>("Mailbox/set", {
+    accountId,
+    destroy: [mailboxId],
+    onDestroyRemoveEmails: true,
+  });
+  if (res.notDestroyed && Object.keys(res.notDestroyed).length) {
+    throw new JmapError(`Mailbox/set destroy failed: ${JSON.stringify(res.notDestroyed)}`);
+  }
+}

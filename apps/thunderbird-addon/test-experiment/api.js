@@ -37,12 +37,6 @@
     }
   }
 
-  const SCENARIOS = {
-    async ping({ registry }) {
-      return { coreVersion: registry.coreVersion, tbVersion: Services.appinfo.version };
-    },
-  };
-
   async function runScenario(name) {
     let report;
     try {
@@ -51,6 +45,9 @@
         "resource://thunderbird-jmap/AccountRegistry.sys.mjs"
       );
       await registry.whenReady();
+      const { SCENARIOS } = ChromeUtils.importESModule(
+        "resource://thunderbird-jmap-test/Scenarios.sys.mjs"
+      );
       const scenario = SCENARIOS[name];
       if (!scenario) {
         throw new Error(`Unknown scenario ${name}`);
@@ -68,6 +65,10 @@
 
   exports.jmapTest = class extends ExtensionCommon.ExtensionAPI {
     onStartup() {
+      resProto.setSubstitution(
+        "thunderbird-jmap-test",
+        Services.io.newURI("test-experiment/", null, this.extension.rootURI)
+      );
       const name = Services.env.get("JMAP_TEST_SCENARIO");
       if (name) {
         runScenario(name);

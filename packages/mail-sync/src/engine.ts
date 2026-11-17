@@ -90,7 +90,13 @@ export class SyncEngine {
 
     const mailboxes = await this.syncMailboxes(state.mailboxState);
     result.mailboxesChanged = mailboxes.changed;
-    state = { ...state, mailboxState: mailboxes.state, mailboxes: mailboxes.list };
+    // Re-read: a store may clear emailState while applying mailboxes to ask
+    // for a full email sync (e.g. after recreating a folder).
+    state = {
+      ...((await this.store.loadState()) ?? state),
+      mailboxState: mailboxes.state,
+      mailboxes: mailboxes.list,
+    };
     await this.store.saveState(state);
 
     let emailState = state.emailState;

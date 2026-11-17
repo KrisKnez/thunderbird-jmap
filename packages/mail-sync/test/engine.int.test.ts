@@ -168,3 +168,26 @@ test("a sync that fails midway rejects, and the next sync converges", async () =
   await new SyncEngine({ client, store, accountId, batchSize: 2 }).sync();
   expect(storeView(store)).toEqual(await serverView());
 }, 60_000);
+
+test("a store that clears emailState while applying mailboxes gets a full email sync", async () => {
+  class ResettingStore extends FakeStore {
+    resetNext = false;
+    override async applyMailboxes(mailboxes: Parameters<FakeStore["applyMailboxes"]>[0]) {
+      await super.applyMailboxes(mailboxes);
+      if (this.resetNext && this.state) {
+        this.state = { ...this.state, emailState: null };
+        this.resetNext = false;
+      }
+    }
+  }
+  await importEmail(client, accountId, { mailboxIds: [inbox], ...subject("A") });
+  const store = new ResettingStore();
+  const engine = new SyncEngine({ client, store, accountId });
+  await engine.sync();
+
+  store.resetNext = true;
+  const result = await engine.sync();
+
+  expect(result.full).toBe(true);
+  expect(storeView(store)).toEqual(await serverView());
+}, 60_000);

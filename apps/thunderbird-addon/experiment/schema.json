@@ -1,1 +1,33 @@
-[{ "namespace": "jmap", "functions": [] }]
+[
+  {
+    "namespace": "jmap",
+    "functions": [
+      {
+        "name": "createAccount",
+        "type": "function",
+        "async": true,
+        "description": "Validate JMAP credentials and create a jmap account.",
+        "parameters": [
+          {
+            "name": "details",
+            "type": "object",
+            "properties": {
+              "email": { "type": "string" },
+              "sessionUrl": { "type": "string", "optional": true },
+              "username": { "type": "string", "optional": true },
+              "secret": { "type": "string" },
+              "authKind": { "type": "string", "enum": ["basic", "bearer"] }
+            }
+          }
+        ]
+      },
+      {
+        "name": "listAccounts",
+        "type": "function",
+        "async": true,
+        "description": "List the jmap accounts.",
+        "parameters": []
+      }
+    ]
+  }
+]

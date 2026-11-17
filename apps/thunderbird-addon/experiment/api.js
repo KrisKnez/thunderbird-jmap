@@ -15,7 +15,13 @@
     "resource://gre/modules/ExtensionCommon.sys.mjs"
   );
 
+  var { ExtensionUtils } = ChromeUtils.importESModule(
+    "resource://gre/modules/ExtensionUtils.sys.mjs"
+  );
+
   const SUBSTITUTION = "thunderbird-jmap";
+  const registry = () =>
+    ChromeUtils.importESModule(`resource://${SUBSTITUTION}/AccountRegistry.sys.mjs`);
   const resProto = Cc["@mozilla.org/network/protocol;1?name=resource"].getService(
     Ci.nsISubstitutingProtocolHandler
   );
@@ -26,22 +32,33 @@
         SUBSTITUTION,
         Services.io.newURI("experiment/modules/", null, this.extension.rootURI)
       );
-      const registry = ChromeUtils.importESModule(
-        `resource://${SUBSTITUTION}/AccountRegistry.sys.mjs`
-      );
-      registry.startup();
+      registry().startup();
     }
 
     onShutdown(isAppShutdown) {
       if (isAppShutdown) {
         return;
       }
+      registry().shutdown();
       resProto.setSubstitution(SUBSTITUTION, null);
       Services.obs.notifyObservers(null, "startupcache-invalidate");
     }
 
     getAPI() {
-      return { jmap: {} };
+      return {
+        jmap: {
+          async createAccount(details) {
+            try {
+              return await registry().createAccount(details);
+            } catch (e) {
+              throw new ExtensionUtils.ExtensionError(`${e.name}: ${e.message}`);
+            }
+          },
+          async listAccounts() {
+            return registry().listAccounts();
+          },
+        },
+      };
     }
   };
 })(this);

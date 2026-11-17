@@ -11,4 +11,6 @@ export {
   setKeywords,
   moveEmail,
   destroyEmail,
+  renameMailbox,
+  destroyMailbox,
 } from "./seed.js";
