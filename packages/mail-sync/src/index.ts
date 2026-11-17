@@ -4,3 +4,4 @@
 
 export type { FolderKind, MailboxInfo, LocalFlags, SyncState, MailStore } from "./store.js";
 export { keywordsToFlags, roleToKind, toMailboxInfos } from "./mapping.js";
+export { SyncEngine, type SyncResult, type LogFn } from "./engine.js";

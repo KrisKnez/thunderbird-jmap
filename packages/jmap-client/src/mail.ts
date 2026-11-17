@@ -94,13 +94,22 @@ export function emailChanges(
 export function emailQuery(
   c: JmapClient,
   accountId: string,
-  o: { position: number; limit: number; sort?: { property: string; isAscending: boolean }[] }
+  o: {
+    position: number;
+    limit: number;
+    sort?: { property: string; isAscending: boolean }[];
+    /** Page from this id (RFC 8620 §5.5); overrides position. */
+    anchor?: string;
+    anchorOffset?: number;
+  }
 ): Promise<{ ids: string[]; position: number; total?: number; queryState: string }> {
   return c.call("Email/query", {
     accountId,
-    position: o.position,
     limit: o.limit,
     calculateTotal: true,
+    ...(o.anchor
+      ? { anchor: o.anchor, anchorOffset: o.anchorOffset ?? 0 }
+      : { position: o.position }),
     ...(o.sort ? { sort: o.sort } : {}),
   });
 }
