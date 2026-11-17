@@ -12,6 +12,7 @@ import {
   type EmailHeaderInfo,
   type JmapClient,
 } from "@thunderbird-jmap/jmap-client";
+import { BodyFetcher } from "./bodies.js";
 import { keywordsToFlags, toMailboxInfos } from "./mapping.js";
 import type { MailboxInfo, MailStore, SyncState } from "./store.js";
 
@@ -45,6 +46,7 @@ export class SyncEngine {
   private readonly batchSizeOption?: number;
   protected readonly log: LogFn;
   private knownMailboxes = new Set<string>();
+  private readonly bodies: BodyFetcher;
 
   constructor(o: {
     client: JmapClient;
@@ -58,6 +60,17 @@ export class SyncEngine {
     this.accountId = o.accountId;
     this.batchSizeOption = o.batchSize;
     this.log = o.log ?? (() => {});
+    this.bodies = new BodyFetcher(this.client, this.store, this.accountId, this.log);
+  }
+
+  /** Download and store bodies the store is missing; returns how many were stored. */
+  downloadPendingBodies(o?: { concurrency?: number; limit?: number }): Promise<number> {
+    return this.bodies.downloadPending(o);
+  }
+
+  /** Download and store one message body now (e.g. when the user opens it). */
+  fetchBody(mailboxId: string, emailId: string, blobId: string): Promise<void> {
+    return this.bodies.fetchBody(mailboxId, emailId, blobId);
   }
 
   protected async batchSize(): Promise<number> {
