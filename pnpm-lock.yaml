@@ -30,6 +30,16 @@ importers:
         specifier: workspace:*
         version: link:../test-support
 
+  packages/mail-sync:
+    dependencies:
+      '@thunderbird-jmap/jmap-client':
+        specifier: workspace:*
+        version: link:../jmap-client
+    devDependencies:
+      '@thunderbird-jmap/test-support':
+        specifier: workspace:*
+        version: link:../test-support
+
   packages/test-support:
     dependencies:
       '@thunderbird-jmap/jmap-client':
