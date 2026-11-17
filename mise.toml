@@ -1,0 +1,30 @@
+[tools]
+node = "24.16.0"
+pnpm = "10.12.1"
+
+[env]
+TB_VERSIONS = "153.7.0esr,158.0,160.0"
+
+[tasks.install]
+description = "Install workspace dependencies"
+run = "pnpm install"
+
+[tasks.typecheck]
+description = "Type-check every workspace package"
+run = "pnpm -r typecheck"
+
+[tasks.test]
+description = "Unit + Stalwart-backed tests for packages and scripts"
+run = ["node --test 'scripts/*.test.mjs'", "pnpm -r --filter './packages/*' test"]
+
+[tasks.check]
+description = "Type-check and test"
+depends = ["typecheck", "test"]
+
+[tasks."stalwart:up"]
+description = "Start the dev Stalwart server on 127.0.0.1:18080 (admin / jmap-dev-password)"
+run = "node scripts/stalwart.mjs up"
+
+[tasks."stalwart:down"]
+description = "Stop the dev Stalwart server"
+run = "node scripts/stalwart.mjs down"
