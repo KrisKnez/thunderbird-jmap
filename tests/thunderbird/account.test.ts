@@ -116,6 +116,17 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
     expect(after.loginCount).toBe(1);
   });
 
+  test("removing the account also forgets its saved password", async () => {
+    const removed = await runScenario<Inspection>({ version, profile, scenario: "remove-account", args: {} });
+    expect(removed.ok, removed.error).toBe(true);
+    expect(removed.accounts).toHaveLength(0);
+    const after = await runScenario<Inspection>({ version, profile, scenario: "inspect", args: { noSync: true } });
+    expect(after.ok, after.error).toBe(true);
+    expect(after.accounts).toHaveLength(0);
+    expect(after.jmapServerPrefCount).toBe(0);
+    expect(after.loginCount).toBe(0);
+  });
+
   test("the setup page creates an account", async () => {
     const fresh = await createProfile({ xpi: TEST_XPI, prefs: IN_PROCESS_PAGES });
     const r = await runScenario<{

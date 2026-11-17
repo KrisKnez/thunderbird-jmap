@@ -74,16 +74,52 @@ function jmapServers() {
   return MailServices.accounts.allServers.filter(server => server.type == TYPE);
 }
 
+/**
+ * server key → where that server's login is saved. Removing an account
+ * clears the server's prefs, so this is recorded beforehand.
+ */
+const savedLogins = new Map();
+
+function rememberLogin(server) {
+  const sessionUrl = server.getStringValue("jmap_session_url");
+  if (sessionUrl) {
+    savedLogins.set(server.key, { origin: loginOrigin(sessionUrl), username: server.username });
+  }
+}
+
+/** When a jmap account is removed, forget its saved login and its runtime. */
+const serverRemovedObserver = {
+  observe(subject, topic, data) {
+    let key = data;
+    try {
+      key = subject.QueryInterface(Ci.nsIMsgIncomingServer).key || data;
+    } catch (e) {
+      // Not a server: use the key passed along.
+    }
+    runtimes.delete(key);
+    const saved = savedLogins.get(key);
+    if (!saved) {
+      return;
+    }
+    savedLogins.delete(key);
+    findLogin(saved.origin, saved.username)
+      .then(login => login && Services.logins.removeLoginAsync(login))
+      .catch(e => log.warn(`could not forget the login of ${key}`, e));
+  },
+};
+
 /** Called by the Experiment's onStartup. */
 export function startup() {
   try {
     registerComponents();
+    Services.obs.addObserver(serverRemovedObserver, "message-server-removed");
     // Accounts load before add-ons; ours were parked as unavailable.
     MailServices.accounts.reactivateAccounts();
     for (const server of jmapServers()) {
       // Core only clears this when the type loads at startup, which never
       // happens for an add-on type.
       Services.prefs.clearUserPref(`mail.server.${server.key}.timeFoundUnavailable`);
+      rememberLogin(server);
       // Rebuild the folder tree now: C++ callers (descendants, lookups) read
       // the child list directly and never reach the JS subFolders getter.
       try {
@@ -113,6 +149,7 @@ export function startup() {
 
 /** Called by the Experiment's onShutdown when the add-on is disabled/updated. */
 export function shutdown() {
+  Services.obs.removeObserver(serverRemovedObserver, "message-server-removed");
   unregisterComponents();
   runtimes.clear();
 }
@@ -348,6 +385,7 @@ export async function createAccount(details) {
     throw e;
   }
 
+  rememberLogin(server);
   syncServer(server, "account created").catch(() => {});
   return { accountKey: account.key };
 }

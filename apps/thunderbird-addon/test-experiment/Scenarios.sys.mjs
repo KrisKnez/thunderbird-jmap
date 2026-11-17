@@ -370,6 +370,25 @@ export const SCENARIOS = {
     return { ...(await report(registry)), streamedContains: streamed.data.includes(body) };
   },
 
+  /**
+   * Remove every jmap account the way the Remove Account dialog of
+   * Thunderbird 158+ does (removeAccount only), then give the add-on a
+   * moment to forget the saved login.
+   */
+  async "remove-account"({ registry }) {
+    for (const account of [...MailServices.accounts.accounts]) {
+      if (account.incomingServer?.type == "jmap") {
+        MailServices.accounts.removeAccount(account, true);
+      }
+    }
+    const jmapLogins = async () =>
+      (await Services.logins.getAllLogins()).filter(l => l.httpRealm == "JMAP").length;
+    for (let i = 0; i < 50 && (await jmapLogins()); i++) {
+      await sleep(100);
+    }
+    return report(registry);
+  },
+
   /** Make every jmap server look as created by a version without the startup check. */
   async "as-older-account"({ registry }) {
     for (const server of jmapServers()) {
