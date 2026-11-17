@@ -189,7 +189,7 @@ export function startup() {
   try {
     registerComponents();
     setSendHandler(sendFromIdentity);
-    startWatching(enqueueLocalChange);
+    startWatching(queueChange);
     Services.obs.addObserver(serverRemovedObserver, "message-server-removed");
     // Accounts load before add-ons; ours were parked as unavailable.
     MailServices.accounts.reactivateAccounts();
@@ -460,8 +460,8 @@ function scheduleFlush(server, delay = FLUSH_DELAY_MS) {
   }, delay);
 }
 
-/** Called by the change watcher for every local change worth sending. */
-function enqueueLocalChange(server, op) {
+/** Queue a local change for the server (change watcher, folder moves and deletes). */
+export function queueChange(server, op) {
   const runtime = runtimeFor(server);
   runtime
     .getOutbox()

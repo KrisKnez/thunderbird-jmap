@@ -11,7 +11,8 @@ export function notify(server, text) {
   const message = `${server.prettyName}: ${text}`;
   log.info(`notice: ${message}`);
   try {
-    MailServices.mailSession.alertUser(message, null);
+    // (message, url, silent) on 153–160; not silent: the main window shows it.
+    MailServices.mailSession.alertUser(message, null, false);
   } catch (e) {
     log.warn("could not show a notice", e);
   }

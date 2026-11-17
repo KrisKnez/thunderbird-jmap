@@ -556,6 +556,97 @@ export const SCENARIOS = {
     return { ...(await report(registry)), queued: runtime.outbox?.size ?? 0, stats: runtime.stats };
   },
 
+  /**
+   * Move, copy or delete through Thunderbird's own paths, then sync, and
+   * report with the notices the user would see.
+   * args: { op: "move" | "copy" | "delete" | "delete-storage" | "empty-trash" | "retention",
+   *         folderPath, toPath?, subject?, keep? }
+   */
+  async "folder-op"({ registry, args }) {
+    const server = jmapServers()[0];
+    await registry.whenIdle(server).catch(() => {});
+    const notices = [];
+    const feedback = {
+      QueryInterface: ChromeUtils.generateQI(["nsIMsgUserFeedbackListener"]),
+      onAlert(message) {
+        notices.push(message);
+        return true;
+      },
+      onCertError() {
+        return true;
+      },
+    };
+    MailServices.mailSession.addUserFeedbackListener(feedback);
+    try {
+      const folder = folderByPath(server, args.folderPath);
+      const hdr = args.subject ? [...folder.messages].find(h => h.mime2DecodedSubject == args.subject) : null;
+      const copyDone = () => {
+        const done = Promise.withResolvers();
+        return {
+          promise: Promise.race([done.promise, sleep(15000)]),
+          listener: {
+            QueryInterface: ChromeUtils.generateQI(["nsIMsgCopyServiceListener"]),
+            onStartCopy() {},
+            onProgress() {},
+            setMessageKey() {},
+            getMessageId() {
+              return "";
+            },
+            onStopCopy(status) {
+              done.resolve(status);
+            },
+          },
+        };
+      };
+      switch (args.op) {
+        case "move":
+        case "copy": {
+          const { promise, listener } = copyDone();
+          MailServices.copy.copyMessages(folder, [hdr], folderByPath(server, args.toPath), args.op == "move", listener, null, true);
+          await promise;
+          break;
+        }
+        case "delete":
+        case "delete-storage": {
+          Services.prefs.setBoolPref("mailnews.mark_message_read.auto", false);
+          const { about3Pane } = await about3PaneReady();
+          about3Pane.displayFolder(folder);
+          await waitFor(() => about3Pane.gDBView?.rowCount > 0);
+          about3Pane.threadTree.selectedIndex = about3Pane.gDBView.findIndexOfMsgHdr(hdr, true);
+          await sleep(300);
+          about3Pane.gDBView.doCommand(
+            args.op == "delete" ? Ci.nsMsgViewCommandType.deleteMsg : Ci.nsMsgViewCommandType.deleteNoTrash
+          );
+          await sleep(1000);
+          break;
+        }
+        case "empty-trash":
+          folder.emptyTrash(null, null);
+          await sleep(1000);
+          break;
+        case "retention": {
+          const settings = Cc["@mozilla.org/msgDatabase/retentionSettings;1"].createInstance(Ci.nsIMsgRetentionSettings);
+          settings.useServerDefaults = false;
+          settings.retainByPreference = Ci.nsIMsgRetentionSettings.nsMsgRetainByNumHeaders;
+          settings.numHeadersToKeep = args.keep;
+          folder.retentionSettings = settings;
+          folder.applyRetentionSettings();
+          await sleep(1000);
+          break;
+        }
+        default:
+          throw new Error(`unknown op ${args.op}`);
+      }
+      await sleep(1500); // the queued change schedules a sync after 1 s
+      await registry.syncServer(server, "test").catch(() => {});
+      await registry.whenIdle(server).catch(() => {});
+      const runtime = registry.runtimeFor(server);
+      return { ...(await report(registry)), queued: runtime.outbox?.size ?? 0, stats: runtime.stats, notices };
+    } finally {
+      MailServices.mailSession.removeUserFeedbackListener(feedback);
+    }
+  },
+
   /** What is queued and what this run sent. args: { sync?: true } */
   async "outbox-state"({ registry, args }) {
     const server = jmapServers()[0];

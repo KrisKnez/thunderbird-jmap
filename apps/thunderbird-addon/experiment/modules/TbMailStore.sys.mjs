@@ -14,6 +14,9 @@ import { localFolderName } from "./FolderNames.sys.mjs";
 import { log } from "./Log.sys.mjs";
 import { mergeServerFlags } from "./core.sys.mjs";
 
+/** Properties not copied when a header moves (they describe its place in the old store). */
+const MOVE_SKIP = new Set(["storeToken", "offlineMsgSize", "msgOffset", "msgThreadId", "threadParent"]);
+
 /** Header property: the keywords the server last reported (JSON array, lower-case, sorted). */
 const SERVER_KEYWORDS = "jmapServerKeywords";
 /** Header property: keywords this server does not keep (space-separated), local-only. */
@@ -595,6 +598,12 @@ export class TbMailStore {
     if (!hdr || hdr.flags & Ci.nsMsgMessageFlags.Offline) {
       return false;
     }
+    this._writeRaw(folder, hdr, raw);
+    return true;
+  }
+
+  /** Append raw message bytes to a folder's store and mark the header as having them. */
+  _writeRaw(folder, hdr, raw) {
     const store = folder.msgStore;
     const out = store.getNewMsgOutputStream(folder);
     try {
@@ -607,11 +616,96 @@ export class TbMailStore {
       store.discardNewMessage(folder, out);
       throw e;
     }
-    const token = store.finishNewMessage(folder, out);
-    hdr.storeToken = token;
+    hdr.storeToken = store.finishNewMessage(folder, out);
     hdr.offlineMessageSize = raw.length;
-    db.markOffline(key, true, null);
+    folder.msgDatabase.markOffline(hdr.messageKey, true, null);
     this._touched.add(folder);
+  }
+
+  /** The raw bytes of a header's stored message, or null if not stored. */
+  _readRaw(folder, hdr) {
+    if (!(hdr.flags & Ci.nsMsgMessageFlags.Offline)) {
+      return null;
+    }
+    // 153/158 take an extra (ignored by 160) out parameter.
+    const stream = folder.getMsgInputStream(hdr, {});
+    try {
+      const input = Cc["@mozilla.org/binaryinputstream;1"].createInstance(Ci.nsIBinaryInputStream);
+      input.setInputStream(stream);
+      return new Uint8Array(input.readByteArray(hdr.offlineMessageSize));
+    } finally {
+      stream.close();
+    }
+  }
+
+  /** The raw bytes of a local message by key (e.g. a draft before it is on the server). */
+  readRawByKey(mailboxId, key) {
+    const folder = this.folderForMailbox(mailboxId);
+    const hdr = folder?.msgDatabase.getMsgHdrForKey(key);
+    return hdr ? this._readRaw(folder, hdr) : null;
+  }
+
+  /**
+   * Move one local copy of an email to another folder at once (the server
+   * is told through the outbound queue). The header keeps all its
+   * properties; a stored body moves with it, otherwise it downloads later.
+   */
+  async moveLocalCopy(fromMailboxId, toMailboxId, emailId) {
+    const from = this.folderForMailbox(fromMailboxId);
+    const to = this.folderForMailbox(toMailboxId);
+    const key = this._folderIndex(fromMailboxId).get(emailId);
+    if (!from || !to || key === undefined) {
+      return false;
+    }
+    const srcDb = from.msgDatabase;
+    const src = srcDb.getMsgHdrForKey(key);
+    if (!src) {
+      return false;
+    }
+    const raw = this._readRaw(from, src);
+    const dstDb = to.msgDatabase;
+    const hdr = dstDb.createNewHdr();
+    hdr.subject = src.subject;
+    hdr.author = src.author;
+    hdr.recipients = src.recipients;
+    hdr.ccList = src.ccList;
+    hdr.date = src.date;
+    hdr.messageId = src.messageId;
+    hdr.messageSize = src.messageSize;
+    const references = [];
+    for (let i = 0; i < src.numReferences; i++) {
+      references.push(src.getStringReference(i));
+    }
+    if (references.length) {
+      hdr.setReferences(references.map(r => `<${r}>`).join(" "));
+    }
+    for (const name of src.properties) {
+      if (!MOVE_SKIP.has(name)) {
+        hdr.setStringProperty(name, src.getStringProperty(name));
+      }
+    }
+    hdr.orFlags(src.flags & ~Ci.nsMsgMessageFlags.Offline);
+    dstDb.addNewHdrToDB(hdr, true);
+    this._folderIndex(toMailboxId).set(emailId, hdr.messageKey);
+    if (raw) {
+      this._writeRaw(to, hdr, raw);
+    }
+    srcDb.deleteHeader(src, null, false, true);
+    this._folderIndex(fromMailboxId).delete(emailId);
+    this._touched.add(from);
+    this._touched.add(to);
     return true;
+  }
+
+  /** The Trash for a folder: of its own folder tree (Mailflare: one per address), else the account's. */
+  trashFolderFor(folder) {
+    let top = folder;
+    while (top.parent && !top.parent.isServer) {
+      top = top.parent;
+    }
+    return (
+      top.getFolderWithFlags(Ci.nsMsgFolderFlags.Trash) ??
+      this._root().getFolderWithFlags(Ci.nsMsgFolderFlags.Trash)
+    );
   }
 }
