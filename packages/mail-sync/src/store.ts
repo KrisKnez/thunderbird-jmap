@@ -41,7 +41,8 @@ export interface MailStore {
   upsertMessage(mailboxId: string, email: EmailHeaderInfo, flags: LocalFlags): Promise<void>;
   removeMessage(mailboxId: string, emailId: string): Promise<void>;
   emailsMissingBody(limit: number): Promise<{ mailboxId: string; emailId: string; blobId: string }[]>;
-  storeBody(mailboxId: string, emailId: string, raw: Uint8Array): Promise<void>;
+  /** Store a raw message; resolves false if the message is unknown or already stored. */
+  storeBody(mailboxId: string, emailId: string, raw: Uint8Array): Promise<boolean>;
   loadState(): Promise<SyncState | null>;
   saveState(s: SyncState): Promise<void>;
 }

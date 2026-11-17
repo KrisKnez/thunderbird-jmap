@@ -87,3 +87,15 @@ test("a body that fails to download is skipped and the others still store", asyn
   expect(store.in(inbox).get(ids[0])?.body).toBeUndefined();
   expect(text(store.in(inbox).get(ids[2])?.body)).toContain("seeded body 3");
 }, 60_000);
+
+test("a body the store declines to keep is not counted, so a download loop ends", async () => {
+  class DecliningStore extends FakeStore {
+    override async storeBody(): Promise<boolean> {
+      return false;
+    }
+  }
+  const store = new DecliningStore();
+  const engine = new SyncEngine({ client, store, accountId });
+  await engine.sync();
+  expect(await engine.downloadPendingBodies()).toBe(0);
+}, 60_000);

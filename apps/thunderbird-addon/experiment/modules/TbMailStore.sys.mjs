@@ -384,7 +384,7 @@ export class TbMailStore {
         if (out.length >= limit) {
           return out;
         }
-        if (!(hdr.flags & Ci.nsMsgMessageFlags.Offline)) {
+        if (!(hdr.flags & Ci.nsMsgMessageFlags.Offline) && hdr.getStringProperty("jmapId")) {
           out.push({
             mailboxId,
             emailId: hdr.getStringProperty("jmapId"),
@@ -400,12 +400,12 @@ export class TbMailStore {
     const folder = this.folderForMailbox(mailboxId);
     const key = this._folderIndex(mailboxId).get(emailId);
     if (!folder || key === undefined) {
-      return;
+      return false;
     }
     const db = folder.msgDatabase;
     const hdr = db.getMsgHdrForKey(key);
     if (!hdr || hdr.flags & Ci.nsMsgMessageFlags.Offline) {
-      return;
+      return false;
     }
     const store = folder.msgStore;
     const out = store.getNewMsgOutputStream(folder);
@@ -424,5 +424,6 @@ export class TbMailStore {
     hdr.offlineMessageSize = raw.length;
     db.markOffline(key, true, null);
     this._touched.add(folder);
+    return true;
   }
 }

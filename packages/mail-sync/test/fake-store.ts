@@ -69,11 +69,13 @@ export class FakeStore implements MailStore {
     return out;
   }
 
-  async storeBody(mailboxId: string, emailId: string, raw: Uint8Array): Promise<void> {
+  async storeBody(mailboxId: string, emailId: string, raw: Uint8Array): Promise<boolean> {
     const m = this.messages.get(mailboxId)?.get(emailId);
-    if (m) {
-      m.body = raw;
+    if (!m || m.body) {
+      return false;
     }
+    m.body = raw;
+    return true;
   }
 
   async loadState(): Promise<SyncState | null> {

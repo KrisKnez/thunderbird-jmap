@@ -60,8 +60,11 @@ export class BodyFetcher {
         return;
       }
       for (const { mailboxId, emailId } of copies) {
-        await this.store.storeBody(mailboxId, emailId, raw);
-        stored++;
+        // Only real stores count: a store that keeps declining must not keep
+        // a caller's "download until nothing is left" loop alive.
+        if (await this.store.storeBody(mailboxId, emailId, raw)) {
+          stored++;
+        }
       }
     });
     return stored;
