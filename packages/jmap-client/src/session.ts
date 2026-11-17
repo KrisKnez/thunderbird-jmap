@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { authorizationHeader, type Credentials } from "./credentials.js";
+import { JmapError } from "./errors.js";
 import { checkedFetch } from "./http.js";
 import type { FetchLike } from "./types.js";
 
@@ -63,15 +64,41 @@ export async function discoverSessionUrl(
 }
 
 const CORE = "urn:ietf:params:jmap:core";
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
-/** Turn a raw session object into a Session with absolute URLs. */
+function isLoopbackHttp(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.protocol == "http:" && LOOPBACK.has(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve a server-supplied URL and require https, so credentials never
+ * travel in cleartext. Plain http is accepted only between loopback hosts
+ * (a local test server).
+ */
+function secureUrl(template: string, sessionUrl: string, field: string): string {
+  const resolved = resolveUrlTemplate(String(template), sessionUrl);
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(resolved)?.[1]?.toLowerCase();
+  const loopbackHttp =
+    isLoopbackHttp(sessionUrl) && isLoopbackHttp(resolved.replace(/\{[^}]*\}/g, "x"));
+  if (scheme != "https" && !loopbackHttp) {
+    throw new JmapError(`The server's ${field} is not an https:// address: ${resolved}`);
+  }
+  return resolved;
+}
+
+/** Turn a raw session object into a Session with absolute, https URLs. */
 export function parseSession(raw: any, sessionUrl: string): Session {
   const core = (raw?.capabilities?.[CORE] ?? {}) as Record<string, unknown>;
   return {
-    apiUrl: resolveUrlTemplate(raw.apiUrl, sessionUrl),
-    downloadUrl: resolveUrlTemplate(raw.downloadUrl, sessionUrl),
-    uploadUrl: resolveUrlTemplate(raw.uploadUrl, sessionUrl),
-    eventSourceUrl: resolveUrlTemplate(raw.eventSourceUrl, sessionUrl),
+    apiUrl: secureUrl(raw.apiUrl, sessionUrl, "apiUrl"),
+    downloadUrl: secureUrl(raw.downloadUrl, sessionUrl, "downloadUrl"),
+    uploadUrl: secureUrl(raw.uploadUrl, sessionUrl, "uploadUrl"),
+    eventSourceUrl: secureUrl(raw.eventSourceUrl, sessionUrl, "eventSourceUrl"),
     state: raw.state,
     username: raw.username,
     accounts: raw.accounts ?? {},

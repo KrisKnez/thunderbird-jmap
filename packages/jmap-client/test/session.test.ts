@@ -90,3 +90,41 @@ describe("JmapClient.getSession", () => {
     expect(await client.primaryMailAccountId()).toBe("d333333");
   });
 });
+
+describe("JmapClient.getSession URL safety", () => {
+  const sessionWith = (overrides: Record<string, string>) =>
+    fakeFetch(() => json({ ...STALWART_LIKE_SESSION, ...overrides })).fetch;
+
+  test("rejects a plain-http API URL from an https session", async () => {
+    const client = new JmapClient({
+      sessionUrl: "https://mail.example.org/jmap/session",
+      credentials: { kind: "basic", username: "u", password: "p" },
+      fetch: sessionWith({ apiUrl: "http://mail.example.org/jmap/" }),
+    });
+    await expect(client.getSession()).rejects.toThrow(/https/);
+  });
+
+  test("rejects non-http schemes", async () => {
+    const client = new JmapClient({
+      sessionUrl: "https://mail.example.org/jmap/session",
+      credentials: { kind: "basic", username: "u", password: "p" },
+      fetch: sessionWith({ downloadUrl: "file:///etc/{blobId}" }),
+    });
+    await expect(client.getSession()).rejects.toThrow(/https/);
+  });
+
+  test("allows http only between loopback hosts", async () => {
+    const ok = new JmapClient({
+      sessionUrl: "http://127.0.0.1:18080/jmap/session",
+      credentials: { kind: "basic", username: "u", password: "p" },
+      fetch: sessionWith({}),
+    });
+    await expect(ok.getSession()).resolves.toMatchObject({ apiUrl: "http://127.0.0.1:18080/jmap/" });
+    const leaky = new JmapClient({
+      sessionUrl: "http://127.0.0.1:18080/jmap/session",
+      credentials: { kind: "basic", username: "u", password: "p" },
+      fetch: sessionWith({ apiUrl: "http://evil.example/jmap/" }),
+    });
+    await expect(leaky.getSession()).rejects.toThrow(/https/);
+  });
+});
