@@ -15,7 +15,7 @@ run = "pnpm -r typecheck"
 
 [tasks.test]
 description = "Unit + Stalwart-backed tests for packages and scripts"
-run = ["node --test 'scripts/*.test.mjs'", "pnpm -r --filter './packages/*' test"]
+run = ["node --test 'scripts/*.test.mjs'", "pnpm -r --filter './packages/*' --filter './apps/*' test"]
 
 [tasks.check]
 description = "Type-check and test"

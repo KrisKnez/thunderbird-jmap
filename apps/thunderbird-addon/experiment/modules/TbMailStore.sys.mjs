@@ -10,6 +10,7 @@
 
 import { MailServices } from "resource:///modules/MailServices.sys.mjs";
 import { NetUtil } from "resource://gre/modules/NetUtil.sys.mjs";
+import { localFolderName } from "./FolderNames.sys.mjs";
 import { log } from "./Log.sys.mjs";
 
 const STATE_FILE = "jmap-sync-state.json";
@@ -22,14 +23,6 @@ const KIND_FLAGS = {
   junk: F.Junk,
   archive: F.Archive,
 };
-
-/**
- * File-system-safe, case-insensitive-safe local name for a mailbox id.
- * JMAP ids use [A-Za-z0-9_-]; upper-case letters become "~" + lower case.
- */
-export function localFolderName(mailboxId) {
-  return mailboxId.replace(/[A-Z]/g, c => "~" + c.toLowerCase());
-}
 
 export class TbMailStore {
   /** @param {nsIMsgIncomingServer} server */
@@ -107,7 +100,7 @@ export class TbMailStore {
     const byId = new Map();
     for (const mailbox of state.mailboxes) {
       const parent = mailbox.parentId ? byId.get(mailbox.parentId) : this._root();
-      if (parent) {
+      if (parent && localFolderName(mailbox.id)) {
         byId.set(mailbox.id, this._ensureChild(parent, mailbox).folder);
       }
     }
@@ -187,6 +180,10 @@ export class TbMailStore {
     for (const mailbox of mailboxes) {
       const parent = mailbox.parentId ? byId.get(mailbox.parentId) : root;
       if (!parent) {
+        continue;
+      }
+      if (!localFolderName(mailbox.id)) {
+        log.warn(`skipping mailbox with invalid id ${JSON.stringify(mailbox.id)}`);
         continue;
       }
       let folder = this.folderForMailbox(mailbox.id);
