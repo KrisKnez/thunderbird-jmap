@@ -697,6 +697,80 @@ export class TbMailStore {
     return true;
   }
 
+  /**
+   * Store a message Thunderbird saved (a draft) in a folder before it is on
+   * the server: header from the file's headers, body stored. Returns its key.
+   */
+  async storeLocalMessage(mailboxId, file, keywords) {
+    const folder = this.folderForMailbox(mailboxId);
+    if (!folder) {
+      throw new Error(`no folder for mailbox ${mailboxId}`);
+    }
+    const raw = await IOUtils.read(file.path);
+    const end = (() => {
+      for (let i = 0; i < raw.length - 1; i++) {
+        if (raw[i] == 0x0a && (raw[i + 1] == 0x0a || (raw[i + 1] == 0x0d && raw[i + 2] == 0x0a))) {
+          return i;
+        }
+      }
+      return raw.length;
+    })();
+    const headers = Cc["@mozilla.org/messenger/mimeheaders;1"].createInstance(Ci.nsIMimeHeaders);
+    headers.initialize(String.fromCharCode.apply(null, raw.subarray(0, end)));
+    const header = name => headers.extractHeader(name, false) ?? "";
+    const db = folder.msgDatabase;
+    const hdr = db.createNewHdr();
+    let subject = header("Subject");
+    const re = /^(re\s*:\s*)+/i;
+    if (re.test(subject)) {
+      subject = subject.replace(re, "");
+      hdr.orFlags(Ci.nsMsgMessageFlags.HasRe);
+    }
+    hdr.subject = subject;
+    hdr.author = header("From");
+    hdr.recipients = header("To");
+    hdr.ccList = header("Cc");
+    hdr.date = (Date.parse(header("Date")) || Date.now()) * 1000;
+    hdr.messageId = header("Message-ID").replace(/^<|>$/g, "");
+    hdr.messageSize = raw.length;
+    if (keywords.includes("$seen")) {
+      hdr.orFlags(Ci.nsMsgMessageFlags.Read);
+    }
+    db.addNewHdrToDB(hdr, true);
+    this._writeRaw(folder, hdr, raw);
+    return hdr.messageKey;
+  }
+
+  /** Link a local message to the email the server created for it. */
+  bindEmail(mailboxId, key, email, keywords) {
+    const folder = this.folderForMailbox(mailboxId);
+    const hdr = folder?.msgDatabase.getMsgHdrForKey(key);
+    if (!hdr) {
+      return;
+    }
+    hdr.setStringProperty("jmapId", email.id);
+    hdr.setStringProperty("jmapBlobId", email.blobId);
+    hdr.setStringProperty("jmapThreadId", email.threadId);
+    hdr.setStringProperty(SERVER_KEYWORDS, JSON.stringify([...keywords].sort()));
+    this._folderIndex(mailboxId).set(email.id, key);
+    this._touched.add(folder);
+  }
+
+  /** Remove a local message by key (e.g. a draft the server would not take). */
+  removeLocalByKey(mailboxId, key) {
+    const folder = this.folderForMailbox(mailboxId);
+    const hdr = folder?.msgDatabase.getMsgHdrForKey(key);
+    if (hdr) {
+      folder.msgDatabase.deleteHeader(hdr, null, false, true);
+      this._touched.add(folder);
+    }
+  }
+
+  /** The subject of a local message by key ("" if unknown). */
+  subjectOfKey(mailboxId, key) {
+    return this.folderForMailbox(mailboxId)?.msgDatabase.getMsgHdrForKey(key)?.mime2DecodedSubject ?? "";
+  }
+
   /** The Trash for a folder: of its own folder tree (Mailflare: one per address), else the account's. */
   trashFolderFor(folder) {
     let top = folder;

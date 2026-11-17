@@ -647,6 +647,85 @@ export const SCENARIOS = {
     }
   },
 
+  /**
+   * Save a draft through Thunderbird's sending code (nsMsgSaveAsDraft),
+   * optionally replacing the draft with subject `replace`; or, with
+   * `intoFolder`, save it into another folder (as a template would be).
+   * args: { from, to, subject, replace?, intoFolder?: string[] }
+   */
+  async "save-draft"({ registry, args }) {
+    const server = jmapServers()[0];
+    await registry.whenIdle(server).catch(() => {});
+    const notices = [];
+    const feedback = {
+      QueryInterface: ChromeUtils.generateQI(["nsIMsgUserFeedbackListener"]),
+      onAlert(message) {
+        notices.push(message);
+        return true;
+      },
+      onCertError() {
+        return true;
+      },
+    };
+    MailServices.mailSession.addUserFeedbackListener(feedback);
+    try {
+      const identity = identityFor(args.from);
+      if (identity.draftsFolderPickerMode != "1") {
+        // Stalwart in this test mode has no JMAP identities to set it.
+        identity.draftsFolderPickerMode = "1";
+        identity.draftsFolderURI = server.rootFolder.getFolderWithFlags(Ci.nsMsgFolderFlags.Drafts).URI;
+      }
+      const file = await messageFile(args);
+      const done = Promise.withResolvers();
+      const copyListener = {
+        QueryInterface: ChromeUtils.generateQI(["nsIMsgSendListener", "nsIMsgCopyServiceListener"]),
+        onStartSending() {},
+        onSendProgress() {},
+        onStatus() {},
+        onStopSending() {},
+        onGetDraftFolderURI() {},
+        onSendNotPerformed(msgId, status) {
+          done.resolve(status);
+        },
+        onTransportSecurityError() {},
+        onStartCopy() {},
+        onProgress() {},
+        setMessageKey() {},
+        getMessageId() {
+          return "";
+        },
+        onStopCopy(status) {
+          done.resolve(status);
+        },
+      };
+      if (args.intoFolder) {
+        MailServices.copy.copyFileMessage(file, folderByPath(server, args.intoFolder), null, true, 0, "", copyListener, null);
+      } else {
+        let msgToReplace = null;
+        if (args.replace) {
+          const drafts = MailUtils.getExistingFolder(identity.draftsFolderURI);
+          // The header of the draft being replaced, as compose passes it.
+          msgToReplace = [...drafts.messages].find(h => h.mime2DecodedSubject == args.replace);
+        }
+        const fields = Cc["@mozilla.org/messengercompose/composefields;1"].createInstance(Ci.nsIMsgCompFields);
+        fields.from = args.from;
+        fields.to = args.to;
+        fields.subject = args.subject;
+        Cc["@mozilla.org/messengercompose/send;1"]
+          .createInstance(Ci.nsIMsgSend)
+          .sendMessageFile(identity, "", fields, file, false, false, Ci.nsIMsgSend.nsMsgSaveAsDraft, msgToReplace, copyListener, null);
+      }
+      const status = await Promise.race([done.promise, sleep(30000).then(() => -1)]);
+      await sleep(1500);
+      await registry.syncServer(server, "test").catch(() => {});
+      await registry.whenIdle(server).catch(() => {});
+      const runtime = registry.runtimeFor(server);
+      return { ...(await report(registry)), status, queued: runtime.outbox?.size ?? 0, notices };
+    } finally {
+      MailServices.mailSession.removeUserFeedbackListener(feedback);
+    }
+  },
+
   /** What is queued and what this run sent. args: { sync?: true } */
   async "outbox-state"({ registry, args }) {
     const server = jmapServers()[0];

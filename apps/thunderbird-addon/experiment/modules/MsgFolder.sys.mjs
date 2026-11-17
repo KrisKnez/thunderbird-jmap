@@ -156,6 +156,46 @@ JmapFolder.prototype = {
     );
   },
 
+  /**
+   * Thunderbird saves a draft (or template) here. It is stored locally at
+   * once, its key goes back to the compose window (so the next save replaces
+   * it), and its import into this mailbox is queued for the server. The
+   * draft it replaces is deleted.
+   */
+  copyFileMessage(file, msgToReplace, isDraftOrTemplate, newMsgFlags, keywords, msgWindow, listener) {
+    const folder = this.delegator.get();
+    const server = this.cppBase.server;
+    const store = runtimeFor(server).store;
+    const mailboxId = mailboxIdOf(folder);
+    const DRAFT_KEYWORDS = ["$draft", "$seen"];
+    const finish = status => {
+      try {
+        MailServices.copy.notifyCompletion(file, folder, status);
+      } catch (e) {
+        log.warn("copy completion failed", e);
+      }
+    };
+    (async () => {
+      const key = await store.storeLocalMessage(mailboxId, file, DRAFT_KEYWORDS);
+      store.flushTouched();
+      try {
+        listener?.setMessageKey?.(key);
+      } catch (e) {
+        log.warn("could not report the saved message key", e);
+      }
+      queueChange(server, { kind: "importDraft", mailboxId, localKey: key, keywords: DRAFT_KEYWORDS });
+      if (msgToReplace) {
+        folder.deleteMessages([msgToReplace], msgWindow, true, false, null, false);
+      }
+    })().then(
+      () => finish(Cr.NS_OK),
+      e => {
+        log.error("saving the draft failed", e);
+        finish(Cr.NS_ERROR_FAILURE);
+      }
+    );
+  },
+
   /** Empty Trash: destroy everything in this Trash, or in every Trash of the account. */
   emptyTrash(...args) {
     const urlListener = args.find(a => a && typeof a.OnStopRunningUrl == "function") ?? null;

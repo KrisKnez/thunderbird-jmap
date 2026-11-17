@@ -390,11 +390,16 @@ const unescapePointer = s => s.replace(/~1/g, "/").replace(/~0/g, "~");
 /** Outbox results are collected during a flush and handled after it (see flushQueue). */
 function outboxHooks(server, runtime) {
   return {
-    async readDraft() {
-      return null;
+    async readDraft(op) {
+      // null when the local draft is gone (saved again, or deleted): drop it.
+      return runtime.store.readRawByKey(op.mailboxId, op.localKey);
     },
-    async onApplied(op) {
+    async onApplied(op, imported) {
       runtime.stats.applied++;
+      if (op.kind == "importDraft" && imported) {
+        runtime.store.bindEmail(op.mailboxId, op.localKey, imported, op.keywords);
+        runtime.store.flushTouched();
+      }
       if (op.kind == "keywords" && runtime.afterFlush) {
         const added = Object.entries(op.patch)
           .filter(([, value]) => value === true)
@@ -405,11 +410,16 @@ function outboxHooks(server, runtime) {
     },
     async onRefused(op, error) {
       runtime.stats.refused++;
-      runtime.afterFlush?.refused.push({
-        op,
-        error,
-        subject: op.emailId ? runtime.store.subjectOf(op.emailId) : "",
-      });
+      let subject = "";
+      if (op.kind == "importDraft") {
+        // The server will not take it: nothing stays behind locally.
+        subject = runtime.store.subjectOfKey(op.mailboxId, op.localKey);
+        runtime.store.removeLocalByKey(op.mailboxId, op.localKey);
+        runtime.store.flushTouched();
+      } else if (op.emailId) {
+        subject = runtime.store.subjectOf(op.emailId);
+      }
+      runtime.afterFlush?.refused.push({ op, error, subject });
     },
   };
 }
