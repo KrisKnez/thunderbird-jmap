@@ -2,7 +2,8 @@
 
 Date: 2026-11-17
 Status: Approved by the owner (2026-11-17); updated with the experiment
-(§9) and the builder review. One question open (§5.4, automatic deletions).
+(§9), the builder review and the owner's answer on automatic deletions
+(§5.4).
 Builds on: `2026-11-17-thunderbird-jmap-addon-design.md` (the main design;
 its §7 mapping, §8 sync and §9 recipe still apply unless changed here).
 
@@ -62,7 +63,8 @@ What the owner told us:
 - A local change that never reaches the server while Thunderbird shows it as
   done, or a server refusal that leaves Thunderbird disagreeing with the
   other apps.
-- Server data deleted by anything other than an explicit user action.
+- Server data deleted by anything other than an explicit user action or a
+  deletion setting the user turned on in Thunderbird (§5.4).
 
 ## 3. Constraints and facts
 
@@ -237,12 +239,13 @@ folder overrides them. No alternative.
   multi-mailbox email only removes that mailbox (main design §7).
 - The local move must not trigger a download: bodies already stored travel
   with the message; others download later as usual.
-- **Open (owner's call):** deletions Thunderbird makes without a click —
-  junk auto-purge, retention policies ("delete messages older than…"),
-  "Empty Trash on exit", a filter's Delete action, and the Empty Trash
-  command. Forwarding them deletes server mail without a click (IMAP does
-  forward them); not forwarding makes sync bring the mail back and the
-  setting delete it again, in a loop.
+- **Automatic deletions reach the server, as for IMAP** (owner,
+  2026-11-17): junk auto-purge, retention policies ("delete messages older
+  than…"), "Empty Trash on exit", a filter's Delete action, and the Empty
+  Trash command (`emptyTrash` override: destroy every email in the Trash
+  mailbox) all go through the same delete path. All of these are settings
+  the user turns on (off by default); their deletions also disappear from
+  the user's other apps.
 
 ### 5.5 Drafts
 - Saving a draft (`copyFileMessage` into the identity's Drafts folder):
