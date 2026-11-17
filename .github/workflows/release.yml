@@ -1,0 +1,79 @@
+# Manual release: Actions → Release → Run workflow.
+# Builds the add-on from the version in package.json (bump it and commit
+# first) and publishes a GitHub release v<version> with the .xpi attached.
+# Untick "publish" to only build; the .xpi is then kept as a run artifact.
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish a GitHub release (untick to build only)
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d # v5.2.9
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Read version
+        id: version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Refuse to reuse a released version
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "::error::Release $TAG already exists. Bump the version (node scripts/bump-version.mjs patch), commit, and run again."
+            exit 1
+          fi
+
+      # Type-check plus unit and Stalwart-backed tests (Stalwart runs in podman).
+      - name: Check
+        run: mise run check
+
+      - name: Build
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mise run build
+          cp apps/thunderbird-addon/dist/thunderbird-jmap.xpi "thunderbird-jmap-$VERSION.xpi"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: thunderbird-jmap-${{ steps.version.outputs.version }}
+          path: thunderbird-jmap-${{ steps.version.outputs.version }}.xpi
+          if-no-files-found: error
+
+      - name: Publish release
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "$TAG" "thunderbird-jmap-$VERSION.xpi" \
+            --target "$GITHUB_SHA" \
+            --title "Thunderbird JMAP $VERSION" \
+            --generate-notes
