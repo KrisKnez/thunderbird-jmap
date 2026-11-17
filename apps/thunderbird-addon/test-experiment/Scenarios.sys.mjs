@@ -321,6 +321,52 @@ export const SCENARIOS = {
     return report(registry);
   },
 
+  /**
+   * Give the store a mailbox tree directly (ids a test server cannot
+   * produce, e.g. Mailflare's "mbx_x~inbox"), store one message in one of
+   * its folders, and stream that message back through the message service.
+   * args: { mailboxes: MailboxInfo[], message: { mailboxId, subject, body } }
+   */
+  async "apply-mailboxes"({ registry, args }) {
+    await about3PaneReady();
+    const server = jmapServers()[0];
+    const store = registry.runtimeFor(server).store;
+    await store.applyMailboxes(args.mailboxes);
+    await store.saveState({ ...(await store.loadState()), mailboxes: args.mailboxes });
+
+    const { mailboxId, subject, body } = args.message;
+    const raw =
+      `From: Tester <tester@example.com>\r\nTo: me@example.com\r\nSubject: ${subject}\r\n` +
+      `Date: Sun, 01 Nov 2026 09:00:00 +0000\r\nMessage-ID: <m1@example.com>\r\n\r\n${body}\r\n`;
+    await store.upsertMessage(
+      mailboxId,
+      {
+        id: "Mtest1",
+        blobId: "Btest1",
+        threadId: "Ttest1",
+        mailboxIds: { [mailboxId]: true },
+        keywords: {},
+        size: raw.length,
+        receivedAt: "2026-11-01T09:00:00Z",
+        sentAt: "2026-11-01T09:00:00Z",
+        messageId: ["m1@example.com"],
+        inReplyTo: null,
+        references: null,
+        subject,
+        from: [{ name: "Tester", email: "tester@example.com" }],
+        to: [{ name: null, email: "me@example.com" }],
+        cc: null,
+        hasAttachment: false,
+      },
+      { read: false, flagged: false, answered: false, forwarded: false, draft: false, junk: null, tags: [] }
+    );
+    await store.storeBody(mailboxId, "Mtest1", new TextEncoder().encode(raw));
+    store.flushTouched();
+    const folder = store.folderForMailbox(mailboxId);
+    const streamed = await streamViaService(folder.getUriForMsg([...folder.messages][0]));
+    return { ...(await report(registry)), streamedContains: streamed.data.includes(body) };
+  },
+
   async inspect({ registry, args }) {
     if (!args?.noSync) {
       for (const server of jmapServers()) {

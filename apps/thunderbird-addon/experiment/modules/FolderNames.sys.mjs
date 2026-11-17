@@ -4,21 +4,43 @@
 
 // Local folder (file) names for JMAP mailboxes. Pure: no Gecko imports.
 
-const JMAP_ID = /^[A-Za-z0-9_-]{1,255}$/;
+/** Longest name we create, so "<name>.msf" and "<name>.sbd" fit in 255 bytes. */
+const MAX_NAME = 240;
 
 /**
- * The local folder name for a mailbox id, or null if the id is not a valid
- * RFC 8620 Id. Server-supplied ids become file names, so anything outside
- * [A-Za-z0-9_-] (e.g. "..", "/") is refused. The "mb-" prefix keeps names
- * clear of reserved device names (con, nul…) and the store's own files;
- * upper-case letters become "~" + lower case for case-insensitive disks.
+ * The local folder name for a mailbox id, or null if there is none.
+ *
+ * Server-supplied ids become file names. RFC 8620 limits ids to
+ * [A-Za-z0-9_-], but servers do not all keep to that (Mailflare uses "~"),
+ * so other characters are escaped rather than refused:
+ *   - a-z, 0-9, "_" and "-" are kept;
+ *   - upper-case letters become "~" + lower case (case-insensitive disks);
+ *   - anything else becomes "!" + two hex digits per UTF-8 byte.
+ * The result uses only [a-z0-9_~!-], so it cannot hold a path separator or
+ * a dot, and different ids always give different names. The "mb-" prefix
+ * keeps names clear of reserved device names (con, nul…) and the store's
+ * own files. Ids that are empty or too long for a file name get null.
  *
  * @param {string} mailboxId
  * @returns {?string}
  */
 export function localFolderName(mailboxId) {
-  if (typeof mailboxId != "string" || !JMAP_ID.test(mailboxId)) {
+  if (typeof mailboxId != "string" || !mailboxId) {
     return null;
   }
-  return "mb-" + mailboxId.replace(/[A-Z]/g, c => "~" + c.toLowerCase());
+  let name = "mb-";
+  for (const byte of new TextEncoder().encode(mailboxId)) {
+    const c = String.fromCharCode(byte);
+    if (/[a-z0-9_-]/.test(c)) {
+      name += c;
+    } else if (/[A-Z]/.test(c)) {
+      name += "~" + c.toLowerCase();
+    } else {
+      name += "!" + byte.toString(16).padStart(2, "0");
+    }
+    if (name.length > MAX_NAME) {
+      return null;
+    }
+  }
+  return name;
 }
