@@ -103,7 +103,7 @@ function isManaged(keyword: string): boolean {
 }
 
 /** RFC 6901 escaping for a keyword inside a "keywords/<k>" patch path. */
-function pointer(keyword: string): string {
+export function escapePointer(keyword: string): string {
   return keyword.replace(/~/g, "~0").replace(/\//g, "~1");
 }
 
@@ -123,10 +123,10 @@ export function keywordPatch(
   const skip = new Set(localOnly.map(k => k.toLowerCase()));
   const patch: Record<string, true | null> = {};
   for (const k of want) {
-    if (!server.has(k) && !skip.has(k)) patch[`keywords/${pointer(k)}`] = true;
+    if (!server.has(k) && !skip.has(k)) patch[`keywords/${escapePointer(k)}`] = true;
   }
   for (const k of server) {
-    if (!want.has(k) && !skip.has(k) && isManaged(k)) patch[`keywords/${pointer(k)}`] = null;
+    if (!want.has(k) && !skip.has(k) && isManaged(k)) patch[`keywords/${escapePointer(k)}`] = null;
   }
   return patch;
 }

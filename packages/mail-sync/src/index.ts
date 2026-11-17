@@ -13,3 +13,4 @@ export {
   SubmissionRefusedError,
   SubmissionUncertainError,
 } from "./outgoing.js";
+export { Outbox, type OutboxOp, type OutboxStorage, type OutboxHooks } from "./outbox.js";
