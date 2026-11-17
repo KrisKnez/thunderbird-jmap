@@ -45,3 +45,7 @@ run = "node apps/thunderbird-addon/scripts/build.mjs --test"
 description = "Run the headless Thunderbird integration tests"
 depends = ["build:test", "tb:fetch"]
 run = "pnpm --filter tests-thunderbird test"
+
+[tasks."tb:run"]
+description = "Launch Thunderbird with a dev profile and the fresh add-on (args: --version <v>, --headless)"
+run = "node scripts/run-thunderbird.mjs"

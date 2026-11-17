@@ -154,6 +154,52 @@ export async function report(registry) {
 
 export const SCENARIOS = {
   /**
+   * Fill in and submit the add-on's setup page in a tab.
+   * args: { email, sessionUrl, username, secret, authKind: "basic"|"bearer" }
+   */
+  async "setup-page"({ registry, args, extension }) {
+    const win = await waitFor(() => {
+      const w = Services.wm.getMostRecentWindow("mail:3pane");
+      return w?.document.readyState == "complete" && w;
+    });
+    const tabmail = win.document.getElementById("tabmail");
+    const tab = tabmail.openTab("contentTab", {
+      url: extension.baseURI.resolve("ui/setup.html"),
+    });
+    const doc = await waitFor(() => {
+      const d = tab.browser.contentDocument;
+      return d?.readyState == "complete" && d.getElementById("setup-form") && d;
+    });
+    if (!doc) {
+      throw new Error("setup page did not load in-process");
+    }
+    const set = (id, value) => {
+      const input = doc.getElementById(id);
+      input.value = value;
+      input.dispatchEvent(new doc.defaultView.Event("input", { bubbles: true }));
+    };
+    set("email", args.email);
+    set("secret", args.secret);
+    doc.getElementById("auth-kind").value = args.authKind == "bearer" ? "bearer" : "basic";
+    set("session-url", args.sessionUrl ?? "");
+    set("username", args.username ?? "");
+    doc.getElementById("setup-form").requestSubmit();
+    const status = await waitFor(() => {
+      const el = doc.getElementById("status");
+      return el?.dataset.state && el.dataset.state != "busy" && el;
+    }, 30000);
+    const accounts = await registry.listAccounts();
+    for (const server of jmapServers()) {
+      await registry.whenIdle(server).catch(() => {});
+    }
+    return {
+      statusState: status?.dataset.state ?? null,
+      statusText: status?.textContent.trim() ?? "",
+      accounts,
+    };
+  },
+
+  /**
    * Open the first message of a folder in the 3-pane and stream it.
    * args: { folderPath: string[], bodies: {[subject]: expected body text} }
    */

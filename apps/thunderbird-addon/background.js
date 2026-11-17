@@ -2,5 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-// Background script. The toolbar action that opens the setup page is added
-// with the setup page.
+// The toolbar button opens the account setup page.
+browser.action.onClicked.addListener(() => {
+  browser.tabs.create({ url: "ui/setup.html" });
+});

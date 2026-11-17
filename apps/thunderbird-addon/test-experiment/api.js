@@ -67,7 +67,7 @@
         throw new Error(`Unknown scenario ${name}`);
       }
       const args = JSON.parse(Services.env.get("JMAP_TEST_ARGS") || "null");
-      report = { ok: true, ...(await scenario({ registry, args })) };
+      report = { ok: true, ...(await scenario({ registry, args, extension })) };
     } catch (e) {
       report = { ok: false, error: String(e?.message ?? e), errorName: e?.name, stack: e?.stack };
     }

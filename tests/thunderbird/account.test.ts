@@ -19,6 +19,9 @@ import type { FolderReport, Inspection } from "./harness/types.js";
 const byPath = (folders: FolderReport[], path: string) =>
   folders.find(f => f.path.join("/") == path);
 
+/** Load extension pages in-process so the scenario can fill in the form. */
+const IN_PROCESS_PAGES = { "extensions.webextensions.remote": false };
+
 /** path → mailboxId, for comparing folder trees across runs. */
 const tree = (folders: FolderReport[]) =>
   Object.fromEntries(folders.map(f => [f.path.join("/"), f.mailboxId]));
@@ -96,6 +99,35 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
     expect(byPath(folders, "Work/INBOX")?.mailboxId).toBe(ids.fakeInbox);
     expect(byPath(folders, "Projects")).toBeUndefined();
     expect(folders.find(f => f.mailboxId == ids.reports)).toBeUndefined();
+  });
+
+  test("the setup page creates an account", async () => {
+    const fresh = await createProfile({ xpi: TEST_XPI, prefs: IN_PROCESS_PAGES });
+    const r = await runScenario<{
+      statusState: string;
+      statusText: string;
+      accounts: { accountKey: string; email: string; sessionUrl: string }[];
+    }>({ version, profile: fresh, scenario: "setup-page", args: accountArgs() });
+    expect(r.ok, r.error).toBe(true);
+    expect(r.statusState, r.statusText).toBe("success");
+    expect(r.statusText).toBe("Account added — your folders will appear in the folder pane.");
+    expect(r.accounts).toEqual([
+      expect.objectContaining({ email: "admin@example.com", sessionUrl: s.sessionUrl }),
+    ]);
+  });
+
+  test("the setup page explains a rejected password", async () => {
+    const fresh = await createProfile({ xpi: TEST_XPI, prefs: IN_PROCESS_PAGES });
+    const r = await runScenario<{ statusState: string; statusText: string; accounts: unknown[] }>({
+      version,
+      profile: fresh,
+      scenario: "setup-page",
+      args: accountArgs("wrong-password"),
+    });
+    expect(r.ok, r.error).toBe(true);
+    expect(r.statusState).toBe("error");
+    expect(r.statusText).toBe("The server rejected the email or password.");
+    expect(r.accounts).toEqual([]);
   });
 
   test("a wrong password creates no account, server prefs or login", async () => {

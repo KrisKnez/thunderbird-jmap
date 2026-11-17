@@ -1,0 +1,149 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+:root {
+  color-scheme: light dark;
+  --bg: #f9f9fb;
+  --surface: #ffffff;
+  --text: #15141a;
+  --muted: #5b5b66;
+  --border: #cfcfd8;
+  --accent: #0061e0;
+  --accent-text: #ffffff;
+  --error: #c50042;
+  --success: #017a40;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1b22;
+    --surface: #2b2a33;
+    --text: #fbfbfe;
+    --muted: #bfbfc9;
+    --border: #52525e;
+    --accent: #00ddff;
+    --accent-text: #15141a;
+    --error: #ff9aa2;
+    --success: #54ffbd;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: menu;
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+main {
+  max-width: 30rem;
+  margin: 3rem auto;
+  padding: 0 16px;
+}
+
+h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 0 0 0.25rem;
+}
+
+.lead,
+.hint {
+  color: var(--muted);
+}
+
+.lead {
+  margin: 0 0 1.5rem;
+}
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.25rem;
+}
+
+label {
+  font-weight: 600;
+  margin-top: 0.6rem;
+}
+
+input,
+select {
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.45rem 0.6rem;
+}
+
+input:focus-visible,
+select:focus-visible,
+button:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+details {
+  margin-top: 0.8rem;
+}
+
+details[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+summary {
+  cursor: pointer;
+  color: var(--accent);
+}
+
+.hint {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+button {
+  margin-top: 1.2rem;
+  align-self: flex-start;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent-text);
+  background: var(--accent);
+  border: none;
+  border-radius: 4px;
+  padding: 0.5rem 1.1rem;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+#status {
+  min-height: 1.4em;
+  margin: 0.6rem 0 0;
+}
+
+#status[data-state="error"] {
+  color: var(--error);
+}
+
+#status[data-state="success"] {
+  color: var(--success);
+  font-weight: 600;
+}
