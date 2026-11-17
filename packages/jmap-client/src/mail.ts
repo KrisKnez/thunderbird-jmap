@@ -122,3 +122,65 @@ export function emailGet(
 ): Promise<{ state: string; list: EmailHeaderInfo[]; notFound: string[] }> {
   return c.call("Email/get", { accountId, ids, properties });
 }
+
+/** A per-object error in a /set or /import response (RFC 8620 §5.3). */
+export interface SetError {
+  type: string;
+  description?: string;
+  properties?: string[];
+}
+
+export interface EmailSetResult {
+  newState: string;
+  updated: Record<string, unknown>;
+  destroyed: string[];
+  notUpdated: Record<string, SetError>;
+  notDestroyed: Record<string, SetError>;
+}
+
+/**
+ * Email/set updates and destroys. Patches are passed through as given
+ * (e.g. "keywords/$seen": true, "mailboxIds/<id>": null); results come back
+ * per email, with absent maps filled in empty.
+ */
+export async function emailSet(
+  c: JmapClient,
+  accountId: string,
+  o: { update?: Record<string, Record<string, unknown>>; destroy?: string[] }
+): Promise<EmailSetResult> {
+  const r = await c.call<Partial<EmailSetResult>>("Email/set", {
+    accountId,
+    ...(o.update ? { update: o.update } : {}),
+    ...(o.destroy ? { destroy: o.destroy } : {}),
+  });
+  return {
+    newState: r.newState ?? "",
+    updated: r.updated ?? {},
+    destroyed: r.destroyed ?? [],
+    notUpdated: r.notUpdated ?? {},
+    notDestroyed: r.notDestroyed ?? {},
+  };
+}
+
+export interface ImportedEmail {
+  id: string;
+  blobId: string;
+  threadId: string;
+}
+
+/** Email/import uploaded raw messages into mailboxes. */
+export async function emailImport(
+  c: JmapClient,
+  accountId: string,
+  emails: Record<string, { blobId: string; mailboxIds: Record<string, true>; keywords: Record<string, true> }>
+): Promise<{ created: Record<string, ImportedEmail>; notCreated: Record<string, SetError> }> {
+  const r = await c.call<{ created?: Record<string, ImportedEmail>; notCreated?: Record<string, SetError> }>(
+    "Email/import",
+    { accountId, emails }
+  );
+  const created: Record<string, ImportedEmail> = {};
+  for (const [key, e] of Object.entries(r.created ?? {})) {
+    created[key] = { id: e.id, blobId: e.blobId, threadId: e.threadId };
+  }
+  return { created, notCreated: r.notCreated ?? {} };
+}

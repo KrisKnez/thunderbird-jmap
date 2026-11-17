@@ -33,4 +33,16 @@ export {
   type EmailAddress,
   type EmailHeaderInfo,
   type Changes,
+  emailSet,
+  emailImport,
+  type SetError,
+  type EmailSetResult,
+  type ImportedEmail,
 } from "./mail.js";
+export {
+  SUBMISSION_USING,
+  identityGet,
+  identityChanges,
+  submitEmail,
+  type Identity,
+} from "./submission.js";
