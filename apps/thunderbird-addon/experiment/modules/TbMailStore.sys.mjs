@@ -55,7 +55,8 @@ export function localFlagsOf(hdr) {
     flagged: hdr.isFlagged,
     answered: !!(hdr.flags & M.Replied),
     forwarded: !!(hdr.flags & M.Forwarded),
-    draft: false,
+    // Thunderbird keeps no draft flag on a header: $draft follows the server.
+    draft: serverKeywordsOf(hdr).includes("$draft"),
     junk: junk == "100" ? true : junk == "0" ? false : null,
     tags: (hdr.getStringProperty("keywords") || "").split(" ").filter(Boolean),
   };
@@ -498,6 +499,49 @@ export class TbMailStore {
     const score = flags.junk === true ? "100" : flags.junk === false ? "0" : "";
     if ((hdr.getStringProperty("junkscore") || "") != score) {
       db.setStringPropertyByHdr(hdr, "junkscore", score);
+    }
+  }
+
+  /** Every local header of an email (one per folder it is in). */
+  headersOf(emailId) {
+    const out = [];
+    for (const folder of this._folders()) {
+      const mailboxId = mailboxIdOf(folder);
+      const key = mailboxId ? this._folderIndex(mailboxId).get(emailId) : undefined;
+      if (key !== undefined) {
+        const hdr = folder.msgDatabase.getMsgHdrForKey(key);
+        if (hdr) {
+          out.push(hdr);
+        }
+      }
+    }
+    return out;
+  }
+
+  /** The subject of an email as stored locally ("" if unknown). */
+  subjectOf(emailId) {
+    return this.headersOf(emailId)[0]?.mime2DecodedSubject ?? "";
+  }
+
+  /**
+   * After a patch that added `added` keywords, those the server did not keep
+   * (absent from its keywords now) are local-only: later diffs skip them.
+   */
+  noteLocalOnly(emailId, added) {
+    for (const hdr of this.headersOf(emailId)) {
+      const server = new Set(serverKeywordsOf(hdr));
+      const local = new Set(localOnlyOf(hdr));
+      let changed = false;
+      for (const keyword of added) {
+        if (!server.has(keyword) && !local.has(keyword)) {
+          local.add(keyword);
+          changed = true;
+        }
+      }
+      if (changed) {
+        hdr.setStringProperty(LOCAL_KEYWORDS, [...local].sort().join(" "));
+        this._touched.add(hdr.folder);
+      }
     }
   }
 

@@ -47,6 +47,10 @@ export interface MailflareInstance {
   deliver(o: { from: string; to: string; subject: string; body: string; messageId?: string }): Promise<void>;
   captured(): Promise<CapturedMessage[]>;
   setSending(enabled: boolean): Promise<void>;
+  /** Stop the server, keeping its data (volume) and ports. */
+  down(): Promise<void>;
+  /** Start it again after down(). */
+  up(): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -234,6 +238,13 @@ export async function startMailflare(o: { localParts?: string[] } = {}): Promise
       captured,
       setSending: async enabled => {
         await sql(`update domains set sending_provider='${enabled ? "cloudflare" : "none"}'`);
+      },
+      down: async () => {
+        await podman("stop", "-t", "2", mailflare);
+      },
+      up: async () => {
+        await podman("start", mailflare);
+        await waitFor(`${baseUrl}/api/setup/status`, 120_000);
       },
       stop,
     };

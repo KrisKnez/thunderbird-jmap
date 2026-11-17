@@ -32,6 +32,7 @@ export {
   keywordPatch,
   mergeServerFlags,
   sendDraft,
+  Outbox,
   RedirectNotSupportedError,
   SubmissionRefusedError,
   SubmissionUncertainError,

@@ -144,6 +144,7 @@ function messagesOf(folder) {
         junk: { 100: true, 0: false }[hdr.getStringProperty("junkscore")] ?? null,
         messageId: hdr.messageId,
         serverKeywords: JSON.parse(hdr.getStringProperty("jmapServerKeywords") || "null"),
+        localOnly: (hdr.getStringProperty("jmapLocalKeywords") || "").split(" ").filter(Boolean),
       });
     }
   } catch (e) {
@@ -486,6 +487,86 @@ export const SCENARIOS = {
       identityCount: account.identities.length,
       accountOutgoingKey: server.getStringValue("jmap_outgoing_key"),
     };
+  },
+
+  /**
+   * Change messages through the different paths Thunderbird has, then sync
+   * (which sends queued changes first). Auto-read on display is off except
+   * for the "select-auto-read" path.
+   * args: { folderPath, changes: [{ path, subject }] }
+   */
+  async "change-all"({ registry, args }) {
+    const server = jmapServers()[0];
+    await registry.whenIdle(server).catch(() => {});
+    const folder = folderByPath(server, args.folderPath);
+    const hdrOf = subject => [...folder.messages].find(h => h.mime2DecodedSubject == subject);
+    Services.prefs.setBoolPref("mailnews.mark_message_read.auto", false);
+    const { about3Pane } = await about3PaneReady();
+    about3Pane.displayFolder(folder);
+    await waitFor(() => about3Pane.gDBView?.rowCount > 0);
+    const select = async hdr => {
+      about3Pane.threadTree.selectedIndex = about3Pane.gDBView.findIndexOfMsgHdr(hdr, true);
+      await sleep(300);
+    };
+    const view = command => about3Pane.gDBView.doCommand(command);
+    for (const { path, subject } of args.changes) {
+      const hdr = path == "folder-read-all" ? null : hdrOf(subject);
+      switch (path) {
+        case "folder-read":
+          folder.markMessagesRead([hdr], true);
+          break;
+        case "folder-read-all":
+          folder.markMessagesRead([...folder.messages], true);
+          break;
+        case "hdr-read":
+          hdr.markRead(true);
+          break;
+        case "folder-flag":
+          folder.markMessagesFlagged([hdr], true);
+          break;
+        case "add-tag":
+          folder.addKeywordsToMessages([hdr], "work");
+          break;
+        case "view-toggle-read":
+          await select(hdr);
+          view(Ci.nsMsgViewCommandType.toggleMessageRead);
+          break;
+        case "thread-read":
+          await select(hdr);
+          view(Ci.nsMsgViewCommandType.markThreadRead);
+          break;
+        case "view-junk":
+          await select(hdr);
+          view(Ci.nsMsgViewCommandType.junk);
+          break;
+        case "select-auto-read":
+          Services.prefs.setBoolPref("mailnews.mark_message_read.auto", true);
+          await select(hdr);
+          await waitFor(() => hdr.isRead, 10000);
+          Services.prefs.setBoolPref("mailnews.mark_message_read.auto", false);
+          break;
+        default:
+          throw new Error(`unknown change path ${path}`);
+      }
+      await sleep(200);
+    }
+    await registry.syncServer(server, "test").catch(() => {});
+    await registry.whenIdle(server).catch(() => {});
+    const runtime = registry.runtimeFor(server);
+    return { ...(await report(registry)), queued: runtime.outbox?.size ?? 0, stats: runtime.stats };
+  },
+
+  /** What is queued and what this run sent. args: { sync?: true } */
+  async "outbox-state"({ registry, args }) {
+    const server = jmapServers()[0];
+    await registry.whenIdle(server).catch(() => {});
+    if (args?.sync) {
+      await registry.syncServer(server, "test").catch(() => {});
+      await registry.whenIdle(server).catch(() => {});
+    }
+    const runtime = registry.runtimeFor(server);
+    const outbox = await runtime.getOutbox().catch(() => null);
+    return { ...(await report(registry)), queued: outbox?.size ?? -1, stats: runtime.stats };
   },
 
   /** An SMTP server nobody can reach, made the default: any fallback would land here. */

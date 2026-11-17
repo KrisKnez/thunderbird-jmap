@@ -19,7 +19,11 @@ import {
   SubmissionRefusedError,
   SubmissionUncertainError,
   sendDraft,
+  Outbox,
 } from "./core.sys.mjs";
+import { setTimeout, clearTimeout } from "resource://gre/modules/Timer.sys.mjs";
+import { startWatching, stopWatching } from "./ChangeWatcher.sys.mjs";
+import { notify } from "./Notify.sys.mjs";
 import { log } from "./Log.sys.mjs";
 import { registerComponents, unregisterComponents } from "./Registration.sys.mjs";
 import { TbMailStore, mailboxIdOf } from "./TbMailStore.sys.mjs";
@@ -73,6 +77,11 @@ class ConfirmServerError extends Error {
   }
 }
 const BODY_PREF = "extensions.thunderbird-jmap.backgroundBodyDownload";
+/** Largest Email/set batch; 0 = the server's maxObjectsInSet. */
+const BATCH_PREF = "extensions.thunderbird-jmap.outboxBatchSize";
+const FLUSH_DELAY_MS = 1000;
+const RETRY_MIN_MS = 30_000;
+const RETRY_MAX_MS = 300_000;
 /** Server pref: the "check for mail at startup" default was applied once. */
 const STARTUP_DEFAULT_APPLIED = "jmap_startup_check_default_applied";
 
@@ -180,6 +189,7 @@ export function startup() {
   try {
     registerComponents();
     setSendHandler(sendFromIdentity);
+    startWatching(enqueueLocalChange);
     Services.obs.addObserver(serverRemovedObserver, "message-server-removed");
     // Accounts load before add-ons; ours were parked as unavailable.
     MailServices.accounts.reactivateAccounts();
@@ -211,6 +221,12 @@ export function startup() {
       }
       if (server.loginAtStartUp) {
         syncServer(server, "startup").catch(() => {});
+      } else {
+        // Changes queued before the last quit still go out.
+        runtimeFor(server)
+          .getOutbox()
+          .then(outbox => outbox.size && scheduleFlush(server, 5000))
+          .catch(() => {});
       }
     }
   } catch (e) {
@@ -241,6 +257,10 @@ export function shutdown() {
     log.error("could not park the outgoing servers", e);
   }
   Services.obs.removeObserver(serverRemovedObserver, "message-server-removed");
+  stopWatching();
+  for (const runtime of runtimes.values()) {
+    clearTimeout(runtime.flushTimer);
+  }
   unregisterComponents();
   runtimes.clear();
 }
@@ -278,6 +298,7 @@ export function runtimeFor(server) {
   if (!runtime) {
     let clientPromise = null;
     let enginePromise = null;
+    let outboxPromise = null;
     runtime = {
       store: new TbMailStore(server),
       lastSyncError: null,
@@ -295,14 +316,37 @@ export function runtimeFor(server) {
         );
         return clientPromise;
       },
+      /** Local changes waiting for the server (persisted in the account's directory). */
+      outbox: null,
+      stats: { applied: 0, refused: 0 },
+      flushTimer: null,
+      retryDelay: 0,
+      afterFlush: null,
+      getOutbox() {
+        outboxPromise ??= this.getClient().then(async client => {
+          const outbox = new Outbox({
+            client,
+            accountId: server.getStringValue("jmap_account_id"),
+            storage: outboxStorage(server),
+            hooks: outboxHooks(server, this),
+            batchSize: Services.prefs.getIntPref(BATCH_PREF, 0) || undefined,
+            log: (level, message) => log[level](message),
+          });
+          await outbox.load();
+          this.outbox = outbox;
+          return outbox;
+        });
+        return outboxPromise;
+      },
       getEngine() {
-        enginePromise ??= this.getClient().then(
-          client =>
+        enginePromise ??= Promise.all([this.getClient(), this.getOutbox()]).then(
+          ([client, outbox]) =>
             new SyncEngine({
               client,
               store: this.store,
               accountId: server.getStringValue("jmap_account_id"),
               log: (level, message) => log[level](message),
+              isPending: id => outbox.pendingEmailIds().has(id),
             })
         );
         return enginePromise;
@@ -317,14 +361,128 @@ export function runtimeFor(server) {
  * Sync a server. Runs are serialized per account; calls made while a run is
  * in flight share one follow-up run.
  */
+/** The account's outbound queue file: jmap-outbox.json in its local directory. */
+function outboxStorage(server) {
+  const path = () => {
+    const file = server.localPath.clone();
+    file.append("jmap-outbox.json");
+    return file.path;
+  };
+  return {
+    async load() {
+      try {
+        return await IOUtils.readJSON(path());
+      } catch (e) {
+        if (e.name != "NotFoundError") {
+          log.warn(`unreadable outbox for ${server.key}; starting empty`, e);
+        }
+        return [];
+      }
+    },
+    async save(ops) {
+      await IOUtils.writeJSON(path(), ops, { tmpPath: path() + ".tmp" });
+    },
+  };
+}
+
+const unescapePointer = s => s.replace(/~1/g, "/").replace(/~0/g, "~");
+
+/** Outbox results are collected during a flush and handled after it (see flushQueue). */
+function outboxHooks(server, runtime) {
+  return {
+    async readDraft() {
+      return null;
+    },
+    async onApplied(op) {
+      runtime.stats.applied++;
+      if (op.kind == "keywords" && runtime.afterFlush) {
+        const added = Object.entries(op.patch)
+          .filter(([, value]) => value === true)
+          .map(([path]) => unescapePointer(path.slice("keywords/".length)));
+        const list = runtime.afterFlush.applied.get(op.emailId) ?? [];
+        runtime.afterFlush.applied.set(op.emailId, [...list, ...added]);
+      }
+    },
+    async onRefused(op, error) {
+      runtime.stats.refused++;
+      runtime.afterFlush?.refused.push({
+        op,
+        error,
+        subject: op.emailId ? runtime.store.subjectOf(op.emailId) : "",
+      });
+    },
+  };
+}
+
+/**
+ * Send queued local changes. Afterwards, re-read the affected emails: a
+ * refused change is undone (the server's state comes back, and the user is
+ * told), and keywords the server silently ignored become local-only.
+ */
+async function flushQueue(server) {
+  const runtime = runtimeFor(server);
+  const outbox = await runtime.getOutbox();
+  if (!outbox.size) {
+    return;
+  }
+  runtime.afterFlush = { applied: new Map(), refused: [] };
+  try {
+    await outbox.flush();
+  } finally {
+    const { applied, refused } = runtime.afterFlush;
+    runtime.afterFlush = null;
+    const ids = [...new Set([...applied.keys(), ...refused.map(r => r.op.emailId).filter(Boolean)])];
+    if (ids.length) {
+      try {
+        await (await runtime.getEngine()).refreshEmails(ids);
+        for (const [emailId, added] of applied) {
+          runtime.store.noteLocalOnly(emailId, added);
+        }
+      } catch (e) {
+        log.warn(`could not re-read changed emails of ${server.key}`, e);
+      }
+      runtime.store.flushTouched();
+    }
+    for (const { error, subject } of refused) {
+      const reason = String(error.description ?? error.type).replace(/\.\s*$/, "");
+      notify(server, `The server refused a change to “${subject}”: ${reason}. It now shows as it is on the server.`);
+    }
+  }
+}
+
+/** Sync soon (which sends queued changes first); later calls push it back. */
+function scheduleFlush(server, delay = FLUSH_DELAY_MS) {
+  const runtime = runtimeFor(server);
+  clearTimeout(runtime.flushTimer);
+  runtime.flushTimer = setTimeout(() => {
+    runtime.flushTimer = null;
+    syncServer(server, "local changes").catch(() => {});
+  }, delay);
+}
+
+/** Called by the change watcher for every local change worth sending. */
+function enqueueLocalChange(server, op) {
+  const runtime = runtimeFor(server);
+  runtime
+    .getOutbox()
+    .then(outbox => outbox.enqueue(op))
+    .then(
+      () => scheduleFlush(server),
+      e => log.warn(`could not queue a change for ${server.key}`, e)
+    );
+}
+
 export function syncServer(server, reason) {
   const runtime = runtimeFor(server);
   const run = () => {
     log.debug(`sync ${server.key} (${reason})`);
     runtime.running = (async () => {
       try {
+        // Local changes go to the server first; the sync then confirms them.
+        await flushQueue(server);
         const result = await (await runtime.getEngine()).sync();
         runtime.lastSyncError = null;
+        runtime.retryDelay = 0;
         try {
           await syncIdentities(server, await runtime.getClient(), server.getStringValue("jmap_account_id"));
         } catch (e) {
@@ -337,6 +495,10 @@ export function syncServer(server, reason) {
       } catch (e) {
         runtime.lastSyncError = e;
         log.warn(`sync of ${server.key} failed`, e);
+        if (runtime.outbox?.size) {
+          runtime.retryDelay = Math.min(Math.max(RETRY_MIN_MS, runtime.retryDelay * 2), RETRY_MAX_MS);
+          scheduleFlush(server, runtime.retryDelay);
+        }
         throw e;
       } finally {
         runtime.running = null;

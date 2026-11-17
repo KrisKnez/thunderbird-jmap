@@ -26,6 +26,8 @@ export interface MessageReport {
   messageId: string;
   /** Keywords the server last reported for this email (lower-case, sorted); null if unknown. */
   serverKeywords: string[] | null;
+  /** Keywords this server does not keep (local-only). */
+  localOnly: string[];
 }
 
 export interface AccountReport {
