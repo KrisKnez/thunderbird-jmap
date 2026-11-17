@@ -245,3 +245,44 @@ test("emailSyncComplete is called after a successful sync, telling whether it wa
   await expect(new SyncEngine({ client: broken, store, accountId }).sync()).rejects.toBeInstanceOf(JmapNetworkError);
   expect(store.completed).toEqual([true, false]);
 }, 60_000);
+
+test("an email with queued changes is left alone by delta and full syncs, and refreshEmails applies the server state", async () => {
+  const alpha = await createMailbox(client, accountId, "Alpha");
+  const a = await importEmail(client, accountId, { mailboxIds: [inbox], ...subject("A") });
+  const store = new FakeStore();
+  const pending = new Set<string>();
+  const engine = new SyncEngine({ client, store, accountId, isPending: id => pending.has(id) });
+  await engine.sync();
+
+  // Locally the user moved A to Alpha and marked it read; the queue has not sent it yet.
+  pending.add(a);
+  const copy = store.in(inbox).get(a)!;
+  await store.removeMessage(inbox, a);
+  await store.upsertMessage(alpha, copy.email, { ...copy.flags, read: true });
+  await setKeywords(client, accountId, a, ["$flagged"]); // another client changes A meanwhile
+
+  await engine.sync();
+  expect(store.in(alpha).get(a)?.flags.read).toBe(true);
+  expect(store.in(inbox).has(a)).toBe(false);
+
+  await store.saveState({ ...(await store.loadState())!, emailState: null }); // force a full sync
+  await engine.sync();
+  expect(store.in(alpha).has(a)).toBe(true);
+  expect(store.in(inbox).has(a)).toBe(false);
+
+  // The queue gave up on it (refused): the server state comes back.
+  pending.delete(a);
+  await engine.refreshEmails([a]);
+  expect(store.in(inbox).get(a)?.flags).toMatchObject({ read: false, flagged: true });
+  expect(store.in(alpha).has(a)).toBe(false);
+}, 60_000);
+
+test("refreshEmails removes local copies of an email the server no longer has", async () => {
+  const a = await importEmail(client, accountId, { mailboxIds: [inbox], ...subject("A") });
+  const store = new FakeStore();
+  const engine = new SyncEngine({ client, store, accountId });
+  await engine.sync();
+  await destroyEmail(client, accountId, a);
+  await engine.refreshEmails([a]);
+  expect(store.in(inbox).has(a)).toBe(false);
+}, 60_000);

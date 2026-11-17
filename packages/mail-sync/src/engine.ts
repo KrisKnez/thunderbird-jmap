@@ -47,6 +47,7 @@ export class SyncEngine {
   protected readonly log: LogFn;
   private knownMailboxes = new Set<string>();
   private readonly bodies: BodyFetcher;
+  private readonly isPending: (emailId: string) => boolean;
 
   constructor(o: {
     client: JmapClient;
@@ -56,12 +57,18 @@ export class SyncEngine {
     log?: LogFn;
     /** Clock for retry timing (tests). */
     now?: () => number;
+    /**
+     * Emails with local changes still queued for the server. Syncs leave
+     * their local copies alone until the queue is done with them.
+     */
+    isPending?: (emailId: string) => boolean;
   }) {
     this.client = o.client;
     this.store = o.store;
     this.accountId = o.accountId;
     this.batchSizeOption = o.batchSize;
     this.log = o.log ?? (() => {});
+    this.isPending = o.isPending ?? (() => false);
     this.bodies = new BodyFetcher(this.client, this.store, this.accountId, this.log, o.now);
   }
 
@@ -156,8 +163,22 @@ export class SyncEngine {
     await this.store.saveState({ ...state, mailboxState: mailboxes.state, mailboxes: mailboxes.list });
   }
 
+  /**
+   * Fetch emails and apply the server's state to their local copies, even
+   * if changes for them are queued (the queue gave up on them).
+   */
+  async refreshEmails(ids: string[]): Promise<void> {
+    const result: SyncResult = { full: false, mailboxesChanged: false, added: 0, updated: 0, removed: 0 };
+    for (const batch of chunks(ids, await this.batchSize())) {
+      const { list, notFound } = await emailGet(this.client, this.accountId, batch);
+      for (const email of list) await this.applyEmail(email, result, true);
+      for (const id of notFound) await this.removeEverywhere(id, result, true);
+    }
+  }
+
   /** Put an email into exactly the local folders of its current mailboxes. */
-  private async applyEmail(email: EmailHeaderInfo, result: SyncResult): Promise<void> {
+  private async applyEmail(email: EmailHeaderInfo, result: SyncResult, force = false): Promise<void> {
+    if (!force && this.isPending(email.id)) return;
     const current = Object.keys(email.mailboxIds);
     await this.ensureMailboxes(current);
     const local = await this.store.mailboxesContaining(email.id);
@@ -176,7 +197,8 @@ export class SyncEngine {
     }
   }
 
-  private async removeEverywhere(emailId: string, result: SyncResult): Promise<void> {
+  private async removeEverywhere(emailId: string, result: SyncResult, force = false): Promise<void> {
+    if (!force && this.isPending(emailId)) return;
     for (const mailboxId of await this.store.mailboxesContaining(emailId)) {
       await this.store.removeMessage(mailboxId, emailId);
       result.removed++;
@@ -227,7 +249,7 @@ export class SyncEngine {
     }
     for (const mailboxId of this.knownMailboxes) {
       for (const emailId of await this.store.localEmailIds(mailboxId)) {
-        if (!seen.has(emailId)) {
+        if (!seen.has(emailId) && !this.isPending(emailId)) {
           await this.store.removeMessage(mailboxId, emailId);
           result.removed++;
         }

@@ -24,6 +24,8 @@ export interface MessageReport {
   /** From junkscore: true (junk), false (not junk), null (unclassified). */
   junk: boolean | null;
   messageId: string;
+  /** Keywords the server last reported for this email (lower-case, sorted); null if unknown. */
+  serverKeywords: string[] | null;
 }
 
 export interface AccountReport {

@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 export type { FolderKind, MailboxInfo, LocalFlags, SyncState, MailStore } from "./store.js";
-export { keywordsToFlags, roleToKind, toMailboxInfos } from "./mapping.js";
+export { keywordsToFlags, roleToKind, toMailboxInfos, flagsToKeywords, keywordPatch, mergeServerFlags } from "./mapping.js";
 export { SyncEngine, type SyncResult, type LogFn } from "./engine.js";
 export {
   isRedirect,

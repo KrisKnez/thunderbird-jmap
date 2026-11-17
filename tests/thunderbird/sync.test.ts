@@ -120,7 +120,12 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
     const alphaMessages = messages(account, alpha);
     expect(inboxMessages.map(m => m.subject).sort()).toEqual(["In both", "Tagged work"]);
     expect(alphaMessages.map(m => m.subject).sort()).toEqual(["In both", "Seen and flagged"]);
-    expect(bySubject(inboxMessages, "Tagged work")).toMatchObject({ read: true, tags: ["work"], junk: true });
+    expect(bySubject(inboxMessages, "Tagged work")).toMatchObject({
+      read: true,
+      tags: ["work"],
+      junk: true,
+      serverKeywords: ["$hasnoattachment", "$junk", "$seen", "work"], // incl. the server's own hidden keyword
+    });
     expect(folder(account, inbox)).toMatchObject({ total: 2, unread: 1 });
     expect(folder(account, alpha)).toMatchObject({ total: 2, unread: 1 });
     afterDelta = r;

@@ -12,6 +12,54 @@ import { MailServices } from "resource:///modules/MailServices.sys.mjs";
 import { NetUtil } from "resource://gre/modules/NetUtil.sys.mjs";
 import { localFolderName } from "./FolderNames.sys.mjs";
 import { log } from "./Log.sys.mjs";
+import { mergeServerFlags } from "./core.sys.mjs";
+
+/** Header property: the keywords the server last reported (JSON array, lower-case, sorted). */
+const SERVER_KEYWORDS = "jmapServerKeywords";
+/** Header property: keywords this server does not keep (space-separated), local-only. */
+const LOCAL_KEYWORDS = "jmapLocalKeywords";
+
+function keywordList(keywords) {
+  return [...new Set(Object.keys(keywords ?? {}).map(k => k.toLowerCase()))].sort();
+}
+
+/** The server's keywords as last seen, or null when unknown (headers from before Phase 2). */
+function storedServerKeywords(hdr) {
+  const value = hdr.getStringProperty(SERVER_KEYWORDS);
+  if (!value) {
+    return null;
+  }
+  try {
+    return JSON.parse(value);
+  } catch (e) {
+    return null;
+  }
+}
+
+/** The keywords the server last reported for this header ([] when unknown). */
+export function serverKeywordsOf(hdr) {
+  return storedServerKeywords(hdr) ?? [];
+}
+
+/** Keywords known to be local-only for this header. */
+export function localOnlyOf(hdr) {
+  return (hdr.getStringProperty(LOCAL_KEYWORDS) || "").split(" ").filter(Boolean);
+}
+
+/** The header's local state as LocalFlags. */
+export function localFlagsOf(hdr) {
+  const M = Ci.nsMsgMessageFlags;
+  const junk = hdr.getStringProperty("junkscore");
+  return {
+    read: hdr.isRead,
+    flagged: hdr.isFlagged,
+    answered: !!(hdr.flags & M.Replied),
+    forwarded: !!(hdr.flags & M.Forwarded),
+    draft: false,
+    junk: junk == "100" ? true : junk == "0" ? false : null,
+    tags: (hdr.getStringProperty("keywords") || "").split(" ").filter(Boolean),
+  };
+}
 
 const STATE_FILE = "jmap-sync-state.json";
 /**
@@ -385,7 +433,7 @@ export class TbMailStore {
     const existing = existingKey === undefined ? null : db.getMsgHdrForKey(existingKey);
     this._touched.add(folder);
     if (existing) {
-      this._updateFlags(db, existing, flags);
+      this._updateFlags(db, existing, flags, email);
       return;
     }
 
@@ -420,6 +468,7 @@ export class TbMailStore {
       hdr.setStringProperty("junkscore", flags.junk ? "100" : "0");
     }
     hdr.setStringProperty("jmapId", email.id);
+    hdr.setStringProperty(SERVER_KEYWORDS, JSON.stringify(keywordList(email.keywords)));
     hdr.setStringProperty("jmapBlobId", email.blobId);
     hdr.setStringProperty("jmapThreadId", email.threadId);
     db.addNewHdrToDB(hdr, true);
@@ -427,8 +476,14 @@ export class TbMailStore {
   }
 
   /** Update an existing header through the database so views are notified. */
-  _updateFlags(db, hdr, flags) {
+  _updateFlags(db, hdr, serverFlags, email) {
     const key = hdr.messageKey;
+    const now = keywordList(email.keywords);
+    // Tags and flags the server never had are local and kept.
+    const flags = mergeServerFlags(serverFlags, now, storedServerKeywords(hdr), localFlagsOf(hdr));
+    // Record the server state first: change listeners compare against it,
+    // so the writes below are not taken for local changes to send back.
+    hdr.setStringProperty(SERVER_KEYWORDS, JSON.stringify(now));
     if (hdr.isRead != flags.read) db.markRead(key, flags.read, null);
     if (hdr.isFlagged != flags.flagged) db.markMarked(key, flags.flagged, null);
     const M = Ci.nsMsgMessageFlags;
@@ -438,12 +493,11 @@ export class TbMailStore {
     if ((hdr.getStringProperty("keywords") || "") != keywords) {
       db.setStringPropertyByHdr(hdr, "keywords", keywords);
     }
-    // $junk / $notjunk set on the server; with neither, keep the local verdict.
-    if (flags.junk !== null) {
-      const score = flags.junk ? "100" : "0";
-      if (hdr.getStringProperty("junkscore") != score) {
-        db.setStringPropertyByHdr(hdr, "junkscore", score);
-      }
+    // $junk / $notjunk from the server (null: unclassified there, or a
+    // local verdict the server never had, which mergeServerFlags kept).
+    const score = flags.junk === true ? "100" : flags.junk === false ? "0" : "";
+    if ((hdr.getStringProperty("junkscore") || "") != score) {
+      db.setStringPropertyByHdr(hdr, "junkscore", score);
     }
   }
 

@@ -143,6 +143,7 @@ function messagesOf(folder) {
         hasBody: !!(hdr.flags & Ci.nsMsgMessageFlags.Offline),
         junk: { 100: true, 0: false }[hdr.getStringProperty("junkscore")] ?? null,
         messageId: hdr.messageId,
+        serverKeywords: JSON.parse(hdr.getStringProperty("jmapServerKeywords") || "null"),
       });
     }
   } catch (e) {

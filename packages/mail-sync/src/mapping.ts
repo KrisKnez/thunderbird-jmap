@@ -82,3 +82,80 @@ export function toMailboxInfos(list: Mailbox[]): MailboxInfo[] {
   visit(null);
   return ordered;
 }
+
+/** The keywords the local flags stand for (lower-case, sorted). */
+export function flagsToKeywords(flags: LocalFlags): string[] {
+  const out: string[] = [];
+  if (flags.read) out.push("$seen");
+  if (flags.flagged) out.push("$flagged");
+  if (flags.answered) out.push("$answered");
+  if (flags.forwarded) out.push("$forwarded");
+  if (flags.draft) out.push("$draft");
+  if (flags.junk === true) out.push("$junk");
+  if (flags.junk === false) out.push("$notjunk");
+  out.push(...flags.tags.map(t => t.toLowerCase()));
+  return [...new Set(out)].sort();
+}
+
+/** Keywords the add-on maps to local state; any other $ keyword is the server's own. */
+function isManaged(keyword: string): boolean {
+  return SYSTEM_KEYWORDS.has(keyword) || isTag(keyword);
+}
+
+/** RFC 6901 escaping for a keyword inside a "keywords/<k>" patch path. */
+function pointer(keyword: string): string {
+  return keyword.replace(/~/g, "~0").replace(/\//g, "~1");
+}
+
+/**
+ * The Email/set patch that turns the server's keywords into `desired`:
+ * one entry per keyword ("keywords/<k>": true | null), differences only.
+ * Server-only $ keywords (e.g. $hasnoattachment) are never removed, and
+ * keywords known to be local-only (the server does not keep them) are skipped.
+ */
+export function keywordPatch(
+  serverKeywords: string[],
+  desired: string[],
+  localOnly: string[]
+): Record<string, true | null> {
+  const server = new Set(serverKeywords.map(k => k.toLowerCase()));
+  const want = new Set(desired.map(k => k.toLowerCase()));
+  const skip = new Set(localOnly.map(k => k.toLowerCase()));
+  const patch: Record<string, true | null> = {};
+  for (const k of want) {
+    if (!server.has(k) && !skip.has(k)) patch[`keywords/${pointer(k)}`] = true;
+  }
+  for (const k of server) {
+    if (!want.has(k) && !skip.has(k) && isManaged(k)) patch[`keywords/${pointer(k)}`] = null;
+  }
+  return patch;
+}
+
+/**
+ * Local flags after a sync. The server decides everything it reports or
+ * once reported (previousServerKeywords: what it reported last time, null
+ * when unknown). A tag, Replied, Forwarded or junk verdict the server never
+ * had is local (some servers, e.g. Mailflare, keep only $seen and $flagged)
+ * and is kept.
+ */
+export function mergeServerFlags(
+  server: LocalFlags,
+  serverKeywords: string[],
+  previousServerKeywords: string[] | null,
+  local: LocalFlags
+): LocalFlags {
+  if (!previousServerKeywords) {
+    return server;
+  }
+  const prev = new Set(previousServerKeywords.map(k => k.toLowerCase()));
+  const now = new Set(serverKeywords.map(k => k.toLowerCase()));
+  const had = (k: string) => prev.has(k) || now.has(k);
+  const junkKnown = had("$junk") || had("$notjunk");
+  return {
+    ...server,
+    answered: server.answered || (!had("$answered") && local.answered),
+    forwarded: server.forwarded || (!had("$forwarded") && local.forwarded),
+    junk: server.junk !== null ? server.junk : junkKnown ? null : local.junk,
+    tags: [...new Set([...server.tags, ...local.tags.filter(t => !prev.has(t.toLowerCase()))])].sort(),
+  };
+}

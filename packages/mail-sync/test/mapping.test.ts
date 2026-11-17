@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import { describe, test, expect } from "vitest";
-import { keywordsToFlags, roleToKind, toMailboxInfos } from "../src/index.js";
+import { keywordsToFlags, roleToKind, toMailboxInfos, flagsToKeywords, keywordPatch, mergeServerFlags } from "../src/index.js";
 
 describe("keywordsToFlags", () => {
   test("maps system keywords case-insensitively and keeps the rest as lower-case tags", () => {
@@ -52,5 +52,61 @@ describe("toMailboxInfos", () => {
     expect(infos.map(m => m.id)).toEqual(["o", "i", "b", "p", "a"]);
     expect(infos.find(m => m.id == "o")?.parentId).toBeNull();
     expect(infos.find(m => m.id == "i")?.kind).toBe("inbox");
+  });
+});
+
+describe("keywords going back to the server", () => {
+  const NONE = { read: false, flagged: false, answered: false, forwarded: false, draft: false, junk: null, tags: [] as string[] };
+
+  test("flagsToKeywords lists the keywords the local flags stand for", () => {
+    expect(flagsToKeywords({ ...NONE, read: true, answered: true, junk: false, tags: ["work"] })).toEqual([
+      "$answered",
+      "$notjunk",
+      "$seen",
+      "work",
+    ]);
+  });
+
+  test("keywordPatch sends only differences and never removes hidden $ keywords", () => {
+    expect(keywordPatch(["$seen", "$hasnoattachment", "work"], ["$flagged", "work"], [])).toEqual({
+      "keywords/$seen": null,
+      "keywords/$flagged": true,
+    });
+  });
+
+  test("keywordPatch skips keywords known to be local-only", () => {
+    expect(keywordPatch(["$seen"], ["$seen", "work"], ["work"])).toEqual({});
+  });
+
+  test("keywordPatch escapes keywords for the JSON pointer", () => {
+    expect(keywordPatch([], ["a/b~c"], [])).toEqual({ "keywords/a~1b~0c": true });
+  });
+
+  test("mergeServerFlags keeps a tag the server never had and drops one the server removed", () => {
+    const local = { ...NONE, tags: ["mine", "gone"] };
+    const merged = mergeServerFlags({ ...NONE, tags: [] }, [], ["gone"], local);
+    expect(merged.tags).toEqual(["mine"]);
+  });
+
+  test("mergeServerFlags keeps Replied/Forwarded/junk the server never stored, and follows it once it has", () => {
+    const local = { ...NONE, answered: true, forwarded: true, junk: true };
+    // Mailflare: only $seen/$flagged are ever stored.
+    expect(mergeServerFlags({ ...NONE, read: true }, ["$seen"], ["$seen"], local)).toMatchObject({
+      read: true,
+      answered: true,
+      forwarded: true,
+      junk: true,
+    });
+    // A server that had $answered and $junk, and dropped them.
+    expect(mergeServerFlags({ ...NONE }, [], ["$answered", "$junk"], local)).toMatchObject({
+      answered: false,
+      forwarded: true,
+      junk: null,
+    });
+  });
+
+  test("mergeServerFlags with no earlier server keywords takes the server's flags", () => {
+    const local = { ...NONE, read: true, tags: ["x"] };
+    expect(mergeServerFlags({ ...NONE, tags: ["y"] }, ["y"], null, local)).toEqual({ ...NONE, tags: ["y"] });
   });
 });
