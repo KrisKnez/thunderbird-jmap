@@ -191,3 +191,38 @@ test("a store that clears emailState while applying mailboxes gets a full email 
   expect(result.full).toBe(true);
   expect(storeView(store)).toEqual(await serverView());
 }, 60_000);
+
+/** A client whose Email/query never returns more than `max` ids (RFC 8620 §5.5 allows clamping). */
+function clampingQueries(max: number): JmapClient {
+  const wrapped = Object.create(client) as JmapClient;
+  wrapped.call = async <T>(n: string, args: Record<string, unknown>, using?: string[]) => {
+    if (n == "Email/query" && typeof args.limit == "number" && args.limit > max) {
+      args = { ...args, limit: max };
+    }
+    return client.call<T>(n, args, using);
+  };
+  return wrapped;
+}
+
+test("a server that clamps query pages still gets every email synced, and a full resync deletes nothing", async () => {
+  for (let n = 0; n < 20; n++) {
+    await importEmail(client, accountId, { mailboxIds: [inbox], ...subject(`clamped ${n}`) });
+  }
+  const store = new FakeStore();
+  await new SyncEngine({ client: clampingQueries(7), store, accountId, batchSize: 50 }).sync();
+  expect(store.in(inbox).size).toBe(20);
+
+  let first = true;
+  const flaky = clampingQueries(7);
+  const plainCall = flaky.call;
+  flaky.call = async <T>(n: string, args: Record<string, unknown>, using?: string[]) => {
+    if (n == "Email/changes" && first) {
+      first = false;
+      throw new JmapMethodError("cannotCalculateChanges");
+    }
+    return plainCall.call(flaky, n, args, using) as Promise<T>;
+  };
+  const result = await new SyncEngine({ client: flaky, store, accountId, batchSize: 50 }).sync();
+  expect(result.full).toBe(true);
+  expect(store.in(inbox).size).toBe(20);
+}, 120_000);

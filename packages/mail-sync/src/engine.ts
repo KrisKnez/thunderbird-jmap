@@ -191,6 +191,7 @@ export class SyncEngine {
     const startState = (await emailGet(this.client, this.accountId, [])).state;
     const seen = new Set<string>();
     let anchor: string | undefined;
+    let listed = 0;
     for (;;) {
       let page;
       try {
@@ -204,9 +205,11 @@ export class SyncEngine {
         if (!anchor || !isMethodError(e, "anchorNotFound")) throw e;
         this.log("info", "query anchor vanished; restarting the full listing");
         anchor = undefined;
+        listed = 0;
         continue;
       }
       if (!page.ids.length) break;
+      listed += page.ids.length;
       for (const ids of chunks(page.ids, batch)) {
         const { list } = await emailGet(this.client, this.accountId, ids);
         for (const email of list) {
@@ -215,7 +218,9 @@ export class SyncEngine {
         }
       }
       anchor = page.ids[page.ids.length - 1];
-      if (page.ids.length < batch) break;
+      // A short page is not the end: servers may clamp `limit`. Stop at the
+      // reported total, or else at an empty page.
+      if (page.total !== undefined && listed >= page.total) break;
     }
     for (const mailboxId of this.knownMailboxes) {
       for (const emailId of await this.store.localEmailIds(mailboxId)) {
