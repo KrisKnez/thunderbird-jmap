@@ -54,13 +54,15 @@ export class SyncEngine {
     accountId: string;
     batchSize?: number;
     log?: LogFn;
+    /** Clock for retry timing (tests). */
+    now?: () => number;
   }) {
     this.client = o.client;
     this.store = o.store;
     this.accountId = o.accountId;
     this.batchSizeOption = o.batchSize;
     this.log = o.log ?? (() => {});
-    this.bodies = new BodyFetcher(this.client, this.store, this.accountId, this.log);
+    this.bodies = new BodyFetcher(this.client, this.store, this.accountId, this.log, o.now);
   }
 
   /** Download and store bodies the store is missing; returns how many were stored. */

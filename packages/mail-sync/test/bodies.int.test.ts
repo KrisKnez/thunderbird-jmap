@@ -88,6 +88,32 @@ test("a body that fails to download is skipped and the others still store", asyn
   expect(text(store.in(inbox).get(ids[2])?.body)).toContain("seeded body 3");
 }, 60_000);
 
+test("bodies that keep failing do not hold up the rest, and are retried only after an hour", async () => {
+  const store = new FakeStore();
+  const { client: c, downloads } = counting();
+  let now = 0;
+  const engine = new SyncEngine({ client: c, store, accountId, now: () => now });
+  await engine.sync();
+  // The first two in the store's order are gone from the server for good.
+  const order = (await store.emailsMissingBody(10)).map(m => m.emailId);
+  for (const id of order.slice(0, 2)) {
+    const m = store.in(inbox).get(id)!;
+    m.email = { ...m.email, blobId: `gone-${id}` };
+  }
+
+  // A window of two: the failing bodies fill it first.
+  expect(await engine.downloadPendingBodies({ limit: 2 })).toBe(0);
+  expect(await engine.downloadPendingBodies({ limit: 2 })).toBe(1);
+  expect(store.in(inbox).get(order[2])?.body).toBeDefined();
+  expect(downloads(), "the failing two are not retried right away").toBe(3);
+  expect(await engine.downloadPendingBodies({ limit: 2 })).toBe(0);
+  expect(downloads()).toBe(3);
+
+  now += 60 * 60 * 1000;
+  await engine.downloadPendingBodies({ limit: 2 });
+  expect(downloads(), "an hour later they are tried again").toBe(5);
+}, 60_000);
+
 test("a body the store declines to keep is not counted, so a download loop ends", async () => {
   class DecliningStore extends FakeStore {
     override async storeBody(): Promise<boolean> {
