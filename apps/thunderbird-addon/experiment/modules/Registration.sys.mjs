@@ -8,7 +8,8 @@ import { JSAccountUtils } from "resource:///modules/jsaccount/JSAccountUtils.sys
 import { log } from "./Log.sys.mjs";
 import { JmapProtocolInfo } from "./ProtocolInfo.sys.mjs";
 import { ServerProps, JmapServer } from "./IncomingServer.sys.mjs";
-import { FolderProps, JmapFolder } from "./MsgFolder.sys.mjs";
+import { FolderProps, JmapFolder, MESSAGE_SCHEME } from "./MsgFolder.sys.mjs";
+import { JmapMessageService } from "./MessageService.sys.mjs";
 
 const registrar = Components.manager.QueryInterface(Ci.nsIComponentRegistrar);
 
@@ -20,6 +21,15 @@ function plainFactory(Constructor) {
     },
   };
 }
+
+let messageService = null;
+const messageServiceFactory = {
+  QueryInterface: ChromeUtils.generateQI(["nsIFactory"]),
+  createInstance(iid) {
+    messageService ??= new JmapMessageService();
+    return messageService.QueryInterface(iid);
+  },
+};
 
 const COMPONENTS = [
   {
@@ -36,6 +46,11 @@ const COMPONENTS = [
     cid: "{73fe0dd1-2f8c-4142-bde4-9104d1c2ade7}",
     contract: FolderProps.contractID,
     factory: () => JSAccountUtils.jaFactory(FolderProps, JmapFolder),
+  },
+  {
+    cid: "{ffcf99c6-e5d4-4eff-9d5d-d4196153a16a}",
+    contract: `@mozilla.org/messenger/messageservice;1?type=${MESSAGE_SCHEME}`,
+    factory: () => messageServiceFactory,
   },
 ];
 

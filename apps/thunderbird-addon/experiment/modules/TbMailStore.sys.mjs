@@ -73,14 +73,14 @@ export class TbMailStore {
   }
 
   async saveState(state) {
-    this._flushTouched();
+    this.flushTouched();
     this._state = structuredClone(state);
     const file = this._stateFile();
     await IOUtils.writeJSON(file.path, state, { tmpPath: file.path + ".tmp" });
   }
 
   /** Commit changed folder databases and refresh their counts. */
-  _flushTouched() {
+  flushTouched() {
     for (const folder of this._touched) {
       try {
         folder.msgDatabase.commit(Ci.nsMsgDBCommitType.kLargeCommit);
@@ -373,11 +373,56 @@ export class TbMailStore {
     }
   }
 
-  async emailsMissingBody() {
-    return [];
+  async emailsMissingBody(limit) {
+    const out = [];
+    for (const folder of this._folders()) {
+      const mailboxId = folder.getStringProperty("jmapMailboxId");
+      if (!mailboxId) {
+        continue;
+      }
+      for (const hdr of folder.messages) {
+        if (out.length >= limit) {
+          return out;
+        }
+        if (!(hdr.flags & Ci.nsMsgMessageFlags.Offline)) {
+          out.push({
+            mailboxId,
+            emailId: hdr.getStringProperty("jmapId"),
+            blobId: hdr.getStringProperty("jmapBlobId"),
+          });
+        }
+      }
+    }
+    return out;
   }
 
-  async storeBody() {
-    throw new Error("TbMailStore.storeBody is not implemented yet");
+  async storeBody(mailboxId, emailId, raw) {
+    const folder = this.folderForMailbox(mailboxId);
+    const key = this._folderIndex(mailboxId).get(emailId);
+    if (!folder || key === undefined) {
+      return;
+    }
+    const db = folder.msgDatabase;
+    const hdr = db.getMsgHdrForKey(key);
+    if (!hdr || hdr.flags & Ci.nsMsgMessageFlags.Offline) {
+      return;
+    }
+    const store = folder.msgStore;
+    const out = store.getNewMsgOutputStream(folder);
+    try {
+      const CHUNK = 0x8000;
+      for (let i = 0; i < raw.length; i += CHUNK) {
+        const chunk = String.fromCharCode.apply(null, raw.subarray(i, i + CHUNK));
+        out.write(chunk, chunk.length);
+      }
+    } catch (e) {
+      store.discardNewMessage(folder, out);
+      throw e;
+    }
+    const token = store.finishNewMessage(folder, out);
+    hdr.storeToken = token;
+    hdr.offlineMessageSize = raw.length;
+    db.markOffline(key, true, null);
+    this._touched.add(folder);
   }
 }

@@ -71,6 +71,8 @@ export function runThunderbird(o: {
       env: {
         ...process.env,
         MOZ_HEADLESS: "1",
+        // Never show crash dialogs or submit reports from test runs.
+        MOZ_CRASHREPORTER_DISABLE: "1",
         MOZ_HEADLESS_WIDTH: "1280",
         MOZ_HEADLESS_HEIGHT: "800",
         JMAP_TEST_SCENARIO: o.scenario,

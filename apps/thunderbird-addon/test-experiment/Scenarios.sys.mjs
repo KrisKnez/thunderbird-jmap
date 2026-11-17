@@ -5,6 +5,72 @@
 // Test-only scenarios run by the jmapTest Experiment (test build only).
 
 import { MailServices } from "resource:///modules/MailServices.sys.mjs";
+import { NetUtil } from "resource://gre/modules/NetUtil.sys.mjs";
+import { setTimeout } from "resource://gre/modules/Timer.sys.mjs";
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function waitFor(check, timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      const value = check();
+      if (value) {
+        return value;
+      }
+    } catch (e) {
+      // Not ready yet.
+    }
+    if (Date.now() > deadline) {
+      return null;
+    }
+    await sleep(100);
+  }
+}
+
+function folderByPath(server, path) {
+  return server.rootFolder.descendants.find(f => folderPath(f).join("/") == path.join("/"));
+}
+
+/** Stream a message through its message service (153/160 and trunk signatures). */
+function streamViaService(uri) {
+  return new Promise(resolve => {
+    let data = "";
+    const listener = {
+      QueryInterface: ChromeUtils.generateQI(["nsIStreamListener"]),
+      onStartRequest() {},
+      onDataAvailable(request, stream, offset, count) {
+        data += NetUtil.readInputStreamToString(stream, count);
+      },
+      onStopRequest(request, status) {
+        resolve({ status, data });
+      },
+    };
+    const service = MailServices.messageServiceFromURI(uri);
+    try {
+      service.streamMessage(uri, listener, null, null, false, "", false);
+    } catch (e) {
+      service.streamMessage(uri, listener, null, false, "", false);
+    }
+  });
+}
+
+async function screenshot(win, name) {
+  try {
+    const bitmap = await win.browsingContext.currentWindowGlobal.drawSnapshot(null, 1, "white");
+    const canvas = win.document.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext("2d").drawImage(bitmap, 0, 0);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/png"));
+    await IOUtils.write(
+      PathUtils.join(PathUtils.profileDir, `${name}.png`),
+      new Uint8Array(await blob.arrayBuffer())
+    );
+  } catch (e) {
+    // Screenshots are best effort.
+  }
+}
 
 const FLAG_NAMES = ["Inbox", "SentMail", "Drafts", "Trash", "Junk", "Archive", "Mail"];
 
@@ -87,6 +153,54 @@ export async function report(registry) {
 }
 
 export const SCENARIOS = {
+  /**
+   * Open the first message of a folder in the 3-pane and stream it.
+   * args: { folderPath: string[], bodies: {[subject]: expected body text} }
+   */
+  async "open-first"({ args }) {
+    const server = jmapServers()[0];
+    const folder = folderByPath(server, args.folderPath);
+    const win = await waitFor(() => {
+      const w = Services.wm.getMostRecentWindow("mail:3pane");
+      return w?.document.readyState == "complete" && w;
+    });
+    const about3Pane = await waitFor(() => {
+      const a = win.document.getElementById("tabmail")?.currentAbout3Pane;
+      return a?.document.readyState == "complete" && a.folderTree && a;
+    });
+    // The message pane registers its header listener when it finishes
+    // loading; selecting a message earlier renders headers inline.
+    const aboutMessage = await waitFor(() => {
+      const w = about3Pane.messageBrowser?.contentWindow;
+      return w?.document.getElementById("msgHeaderView")?.loaded && w;
+    });
+    about3Pane.displayFolder(folder);
+    await waitFor(() => about3Pane.gDBView?.rowCount > 0);
+    about3Pane.threadTree.selectedIndex = 0;
+
+    const subject = await waitFor(() => aboutMessage.gMessage?.mime2DecodedSubject);
+    const expected = args.bodies[subject] ?? "";
+    // Wait for the whole document: the in-body header table is only hidden
+    // once messageBody.css (linked from the message's <head>) has loaded.
+    const doc = await waitFor(() => {
+      const d = aboutMessage.getMessagePaneBrowser().contentDocument;
+      return expected && d?.readyState == "complete" && d.body?.textContent?.includes(expected) && d;
+    }, 15000);
+    // innerText: only what is visible (the header table is hidden when the
+    // header pane handles the headers).
+    const bodyText =
+      aboutMessage.getMessagePaneBrowser().contentDocument?.body?.innerText?.trim().slice(0, 500) ?? "";
+    const streamed = await streamViaService(aboutMessage.gMessageURI);
+    await screenshot(win, "open-first");
+    return {
+      rendered: !!doc,
+      bodyText,
+      headerSubject: subject,
+      streamedBytes: streamed.data.length,
+      streamedContains: !!expected && streamed.data.includes(expected),
+    };
+  },
+
   async ping({ registry }) {
     return { coreVersion: registry.coreVersion, tbVersion: Services.appinfo.version };
   },
@@ -95,6 +209,7 @@ export const SCENARIOS = {
     const { accountKey } = await registry.createAccount(args);
     const server = MailServices.accounts.getAccount(accountKey).incomingServer;
     await registry.syncServer(server, "test");
+    await registry.whenIdle(server);
     return report(registry);
   },
 
@@ -102,6 +217,7 @@ export const SCENARIOS = {
     if (!args?.noSync) {
       for (const server of jmapServers()) {
         await registry.syncServer(server, "test").catch(() => {});
+        await registry.whenIdle(server).catch(() => {});
       }
     }
     return report(registry);

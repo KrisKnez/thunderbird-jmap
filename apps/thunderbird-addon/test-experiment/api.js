@@ -37,7 +37,21 @@
     }
   }
 
-  async function runScenario(name) {
+  /**
+   * Quitting while add-on background scripts are still starting makes
+   * shutdown wait on them until AsyncShutdown aborts (a crash). Wait for
+   * browser startup and our own background first.
+   */
+  async function settleStartup(extension) {
+    const { ExtensionParent } = ChromeUtils.importESModule(
+      "resource://gre/modules/ExtensionParent.sys.mjs"
+    );
+    await ExtensionParent.browserStartupPromise;
+    await waitFor(() => extension.backgroundState == "running", 15000).catch(() => {});
+    await sleep(250);
+  }
+
+  async function runScenario(name, extension) {
     let report;
     try {
       await waitFor(() => resProto.hasSubstitution("thunderbird-jmap"));
@@ -59,6 +73,7 @@
     }
     await IOUtils.writeJSON(PathUtils.join(PathUtils.profileDir, `jmaptest-${name}.json`), report);
     if (Services.prefs.getBoolPref("jmaptest.autoquit", false)) {
+      await settleStartup(extension);
       Services.startup.quit(Ci.nsIAppStartup.eAttemptQuit);
     }
   }
@@ -71,7 +86,7 @@
       );
       const name = Services.env.get("JMAP_TEST_SCENARIO");
       if (name) {
-        runScenario(name);
+        runScenario(name, this.extension);
       }
     }
 

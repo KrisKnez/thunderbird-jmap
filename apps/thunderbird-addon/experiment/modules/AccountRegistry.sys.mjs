@@ -32,6 +32,7 @@ const LoginInfo = Components.Constructor(
 );
 
 const fetchImpl = (url, init) => fetch(url, init);
+const BODY_PREF = "extensions.thunderbird-jmap.backgroundBodyDownload";
 
 let resolveReady;
 const ready = new Promise(resolve => (resolveReady = resolve));
@@ -114,6 +115,7 @@ export function runtimeFor(server) {
       lastSyncError: null,
       running: null,
       followUp: null,
+      bodies: null,
       getClient() {
         clientPromise ??= credentialsFor(server).then(
           credentials =>
@@ -155,6 +157,9 @@ export function syncServer(server, reason) {
       try {
         const result = await (await runtime.getEngine()).sync();
         runtime.lastSyncError = null;
+        if (Services.prefs.getBoolPref(BODY_PREF, true)) {
+          downloadBodies(server).catch(() => {});
+        }
         return result;
       } catch (e) {
         runtime.lastSyncError = e;
@@ -176,6 +181,36 @@ export function syncServer(server, reason) {
     return runtime.followUp;
   }
   return run();
+}
+
+/**
+ * Download every missing message body in the background. One download job
+ * per account at a time; a call while one runs returns that job.
+ */
+export function downloadBodies(server) {
+  const runtime = runtimeFor(server);
+  runtime.bodies ??= (async () => {
+    try {
+      const engine = await runtime.getEngine();
+      while ((await engine.downloadPendingBodies()) > 0) {
+        runtime.store.flushTouched();
+      }
+    } catch (e) {
+      log.warn(`body download for ${server.key} failed`, e);
+    } finally {
+      runtime.store.flushTouched();
+      runtime.bodies = null;
+    }
+  })();
+  return runtime.bodies;
+}
+
+/** Resolves when no sync or body download is running for the server. */
+export async function whenIdle(server) {
+  const runtime = runtimeFor(server);
+  while (runtime.running || runtime.followUp || runtime.bodies) {
+    await Promise.allSettled([runtime.running, runtime.followUp, runtime.bodies]);
+  }
 }
 
 // --- account creation -----------------------------------------------------
