@@ -28,6 +28,19 @@ async function waitFor(check, timeoutMs = 30000) {
   }
 }
 
+/** The main window's about:3pane once its folder pane is built, or null. */
+async function about3PaneReady() {
+  const win = await waitFor(() => {
+    const w = Services.wm.getMostRecentWindow("mail:3pane");
+    return w?.document.readyState == "complete" && w;
+  });
+  const about3Pane = await waitFor(() => {
+    const a = win?.document.getElementById("tabmail")?.currentAbout3Pane;
+    return a?.document.readyState == "complete" && a.folderTree && a.folderPane?.activeModes?.length && a;
+  });
+  return about3Pane ? { win, about3Pane } : null;
+}
+
 function folderByPath(server, path) {
   return server.rootFolder.descendants.find(f => folderPath(f).join("/") == path.join("/"));
 }
@@ -111,6 +124,7 @@ function messagesOf(folder) {
 
 /** Everything the integration tests assert on, for every jmap account. */
 export async function report(registry) {
+  const folderPane = (await about3PaneReady())?.about3Pane.folderPane;
   const accounts = [];
   for (const account of MailServices.accounts.accounts) {
     const server = account.incomingServer;
@@ -127,6 +141,8 @@ export async function report(registry) {
         flags: FLAG_NAMES.filter(name => folder.getFlag(Ci.nsMsgFolderFlags[name])),
         total: folder.getTotalMessages(false),
         unread: folder.getNumUnread(false),
+        // Shown in the main window's folder pane (what the user sees).
+        inPane: !!folderPane?.getRowForFolder(folder),
       });
       messages[path.join("/")] = messagesOf(folder);
     }
@@ -257,14 +273,7 @@ export const SCENARIOS = {
   async "open-first"({ args }) {
     const server = jmapServers()[0];
     const folder = folderByPath(server, args.folderPath);
-    const win = await waitFor(() => {
-      const w = Services.wm.getMostRecentWindow("mail:3pane");
-      return w?.document.readyState == "complete" && w;
-    });
-    const about3Pane = await waitFor(() => {
-      const a = win.document.getElementById("tabmail")?.currentAbout3Pane;
-      return a?.document.readyState == "complete" && a.folderTree && a;
-    });
+    const { win, about3Pane } = await about3PaneReady();
     // The message pane registers its header listener when it finishes
     // loading; selecting a message earlier renders headers inline.
     const aboutMessage = await waitFor(() => {
@@ -303,6 +312,8 @@ export const SCENARIOS = {
   },
 
   async "create-account"({ registry, args }) {
+    // As for a user: the main window is open before the account is added.
+    await about3PaneReady();
     const { accountKey } = await registry.createAccount(args);
     const server = MailServices.accounts.getAccount(accountKey).incomingServer;
     await registry.syncServer(server, "test");

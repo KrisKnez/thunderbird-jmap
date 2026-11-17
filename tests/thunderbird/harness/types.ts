@@ -9,6 +9,8 @@ export interface FolderReport {
   flags: string[];
   total: number;
   unread: number;
+  /** Shown in the main window's folder pane. */
+  inPane: boolean;
 }
 
 export interface MessageReport {

@@ -271,6 +271,9 @@ export class TbMailStore {
             this._markComplete(folder);
           }
           MailServices.mfn.notifyFolderAdded(folder);
+          // The folder pane listens to folder listeners (onFolderAdded),
+          // not to the notification service above.
+          parent.notifyFolderAdded(folder);
         }
       }
       byId.set(mailbox.id, folder);

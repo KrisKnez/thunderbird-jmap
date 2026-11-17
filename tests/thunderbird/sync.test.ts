@@ -23,6 +23,7 @@ const folder = (a: AccountReport, mailboxId: string) => a.folders.find(f => f.ma
 const messages = (a: AccountReport, mailboxId: string): MessageReport[] =>
   a.messages[folder(a, mailboxId).path.join("/")] ?? [];
 const bySubject = (list: MessageReport[], subject: string) => list.find(m => m.subject == subject);
+const missingFromPane = (a: AccountReport) => a.folders.filter(f => !f.inPane).map(f => f.path.join("/"));
 
 describe.each(TB_VERSIONS)("Thunderbird %s", version => {
   let s: StalwartInstance;
@@ -83,11 +84,13 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
     expect(bySubject(inboxMessages, "Seen and flagged")).toMatchObject({ read: true, flagged: true, jmapId: ids.a });
     expect(bySubject(inboxMessages, "Tagged work")).toMatchObject({ read: false, flagged: false, tags: ["work"] });
     expect(folder(account, inbox)).toMatchObject({ total: 2, unread: 1 });
+    expect(missingFromPane(account), "folders created while the window is open must show").toEqual([]);
   });
 
   test("non-ASCII senders and subjects are stored correctly", async () => {
     const r = await runScenario<Inspection>({ version, profile, scenario: "inspect", args: { noSync: true } });
     expect(r.ok, r.error).toBe(true);
+    expect(missingFromPane(r.accounts[0]), "folders must show after a restart").toEqual([]);
     const z = bySubject(messages(r.accounts[0], alpha), "Привет, мир");
     expect(z?.author).toBe("Žana Šimić <zana@example.com>");
   });
