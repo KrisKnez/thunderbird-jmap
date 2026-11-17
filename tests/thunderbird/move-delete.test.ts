@@ -178,10 +178,13 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
       if (kind != "stalwart") return;
       const r = await op({ op: "retention", folderPath: path.old, keep: 1 });
       expect(r.ok, r.error).toBe(true);
-      expect(subjectsIn(r, path.old)).toEqual(["OLD3"]);
-      expect(await mailboxesOf(ids.OLD1)).toEqual([]);
-      expect(await mailboxesOf(ids.OLD2)).toEqual([]);
-      expect(await mailboxesOf(ids.OLD3)).toEqual([box.old]);
+      // Which one Thunderbird keeps differs (153/158 prune by message order,
+      // 160 by date); what it deletes must be gone from the server too.
+      const kept = subjectsIn(r, path.old);
+      expect(kept).toHaveLength(1);
+      for (const subject of ["OLD1", "OLD2", "OLD3"]) {
+        expect(await mailboxesOf(ids[subject]), subject).toEqual(kept.includes(subject) ? [box.old] : []);
+      }
     });
 
     test("on Mailflare a move between the two address trees is undone and reported", async () => {
