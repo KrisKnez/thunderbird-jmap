@@ -75,6 +75,15 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
     expect(opened.rendered, opened.bodyText).toBe(true);
     expect(opened.bodyText).not.toContain("Subject:");
     expect(opened.streamedContains).toBe(true);
+
+    const parsed = await runScenario<{ subject: string; bodyText: string | null }>({
+      version,
+      profile,
+      scenario: "mime-body",
+      args: { folderPath: ["Inbox"] },
+    });
+    expect(parsed.ok, parsed.error).toBe(true);
+    expect(parsed.bodyText, "MsgHdrToMimeMessage must see the body").toContain(BODIES[parsed.subject]);
   });
 
   test("with background download off, opening a message fetches its body first", async () => {

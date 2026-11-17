@@ -154,6 +154,40 @@ export async function report(registry) {
 
 export const SCENARIOS = {
   /**
+   * Parse the first message of a folder with MsgHdrToMimeMessage (what
+   * global search indexing and message summaries use).
+   * args: { folderPath: string[] }
+   */
+  async "mime-body"({ args }) {
+    const { MsgHdrToMimeMessage } = ChromeUtils.importESModule(
+      "resource:///modules/gloda/MimeMessage.sys.mjs"
+    );
+    const folder = folderByPath(jmapServers()[0], args.folderPath);
+    const hdr = [...folder.messages][0];
+    let outcome = "timeout";
+    const mime = await Promise.race([
+      new Promise(resolve =>
+        MsgHdrToMimeMessage(
+          hdr,
+          null,
+          (aHdr, aMime) => {
+            outcome = aMime ? "parsed" : "callback-null";
+            resolve(aMime);
+          },
+          true,
+          { saneBodySize: true }
+        )
+      ),
+      sleep(10000).then(() => null),
+    ]);
+    return {
+      outcome,
+      subject: hdr.mime2DecodedSubject,
+      bodyText: mime ? mime.coerceBodyToPlaintext(folder) : null,
+    };
+  },
+
+  /**
    * Fill in and submit the add-on's setup page in a tab.
    * args: { email, sessionUrl, username, secret, authKind: "basic"|"bearer" }
    */

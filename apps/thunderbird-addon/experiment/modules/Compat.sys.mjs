@@ -10,11 +10,11 @@
  *   trunk:   (urlListener, convertData, additionalHeader, localOnly)
  *
  * @param {Array} args - the arguments after (uri, listener).
- * @returns {{urlListener: ?nsIUrlListener, additionalHeader: string}}
+ * @returns {{urlListener: ?nsIUrlListener, additionalHeader: string, localOnly: boolean}}
  */
 export function streamMessageArgs(args) {
   if (typeof args[1] == "boolean") {
-    return { urlListener: args[0] ?? null, additionalHeader: args[2] ?? "" };
+    return { urlListener: args[0] ?? null, additionalHeader: args[2] ?? "", localOnly: !!args[3] };
   }
-  return { urlListener: args[1] ?? null, additionalHeader: args[3] ?? "" };
+  return { urlListener: args[1] ?? null, additionalHeader: args[3] ?? "", localOnly: !!args[4] };
 }

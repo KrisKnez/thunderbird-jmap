@@ -8,7 +8,6 @@
 // A message whose body is not stored yet is downloaded first.
 
 import { MailUtils } from "resource:///modules/MailUtils.sys.mjs";
-import { NetUtil } from "resource://gre/modules/NetUtil.sys.mjs";
 import { runtimeFor } from "./AccountRegistry.sys.mjs";
 import { streamMessageArgs } from "./Compat.sys.mjs";
 import { TYPE } from "./IncomingServer.sys.mjs";
@@ -47,10 +46,15 @@ async function fetchBody(folder, key) {
   runtime.store.flushTouched();
 }
 
+/**
+ * The mailbox: URL for a message. `additionalHeader` is the value of the
+ * "header=" parameter (e.g. "filter&emitter=js"); callers rely on the
+ * service to prepend "header=", as the built-in mailbox service does.
+ */
 function mailboxUrl(uri, additionalHeader = "") {
   const { folder, key } = parseMessageURI(uri);
   const path = Services.io.newFileURI(folder.filePath).pathQueryRef;
-  const query = `number=${key}${additionalHeader ? "&" + additionalHeader : ""}`;
+  const query = `number=${key}${additionalHeader ? "&header=" + additionalHeader : ""}`;
   const url = Services.io.newURI(`mailbox://${path}?${query}`);
   const messageUrl = url.QueryInterface(Ci.nsIMsgMessageUrl);
   messageUrl.originalSpec = uri;
@@ -118,14 +122,24 @@ JmapMessageService.prototype = {
   },
 
   streamMessage(uri, listener, ...rest) {
-    const { urlListener, additionalHeader } = streamMessageArgs(rest);
+    const { urlListener, additionalHeader, localOnly } = streamMessageArgs(rest);
+    const { folder, key } = parseMessageURI(uri);
+    if (localOnly && !hasBody(folder, key)) {
+      // The caller asked not to touch the network.
+      throw Components.Exception(`${uri} is not stored locally`, Cr.NS_ERROR_FAILURE);
+    }
     const url = mailboxUrl(uri, additionalHeader);
     if (urlListener) {
       url.QueryInterface(Ci.nsIMsgMailNewsUrl).RegisterListener(urlListener);
     }
+    // Run the URL through the built-in mailbox service with the consumer
+    // attached (RunMailboxUrl), like its own streamMessage does: opening a
+    // plain channel would drop the consumer when "header=filter" asks the
+    // mailbox protocol to insert the MIME converter.
     const open = () =>
-      NetUtil.newChannel({ uri: url, loadUsingSystemPrincipal: true }).asyncOpen(listener);
-    const { folder, key } = parseMessageURI(uri);
+      Cc["@mozilla.org/messenger/messageservice;1?type=mailbox-message"]
+        .getService(Ci.nsIMsgMessageFetchPartService)
+        .fetchMimePart(url, uri, listener, null, null);
     if (hasBody(folder, key)) {
       open();
     } else {
