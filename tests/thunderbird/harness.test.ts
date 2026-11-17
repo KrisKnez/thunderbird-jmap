@@ -6,16 +6,18 @@
 // profile still holds the report of an earlier run of the same scenario.
 
 import { test, expect } from "vitest";
-import { writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createProfile, TB_VERSIONS, TEST_XPI } from "./harness/thunderbird.js";
+import { ADDON_ID, createProfile, TB_VERSIONS, TEST_XPI } from "./harness/thunderbird.js";
 import { runScenario } from "./harness/scenario.js";
 
 test("a report left by an earlier run is never read as this run's", async () => {
   const profile = await createProfile({ xpi: TEST_XPI });
+  // Without the add-on nothing can write a report (and nothing quits
+  // Thunderbird, so the run ends at its timeout).
+  await rm(join(profile, "extensions", `${ADDON_ID}.xpi`));
   await writeFile(join(profile, "jmaptest-ping.json"), JSON.stringify({ ok: true, stale: true }));
-  // Killed long before the scenario could write a report of its own.
   await expect(
-    runScenario({ version: TB_VERSIONS[0], profile, scenario: "ping", timeoutMs: 1000 })
+    runScenario({ version: TB_VERSIONS[0], profile, scenario: "ping", timeoutMs: 8000 })
   ).rejects.toThrow(/No report/);
 });
