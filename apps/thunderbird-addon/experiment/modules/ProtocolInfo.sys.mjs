@@ -30,7 +30,7 @@ JmapProtocolInfo.prototype = {
     return true;
   },
   get canLoginAtStartUp() {
-    return false;
+    return true;
   },
   get canDuplicate() {
     return false;

@@ -53,9 +53,10 @@
 
   async function runScenario(name, extension) {
     let report;
+    let registry;
     try {
       await waitFor(() => resProto.hasSubstitution("thunderbird-jmap"));
-      const registry = ChromeUtils.importESModule(
+      registry = ChromeUtils.importESModule(
         "resource://thunderbird-jmap/AccountRegistry.sys.mjs"
       );
       await registry.whenReady();
@@ -74,6 +75,14 @@
     await IOUtils.writeJSON(PathUtils.join(PathUtils.profileDir, `jmaptest-${name}.json`), report);
     if (Services.prefs.getBoolPref("jmaptest.autoquit", false)) {
       await settleStartup(extension);
+      // Let syncs still running (e.g. the one started at startup) finish,
+      // so quitting never cuts one off halfway through its writes.
+      const { MailServices } = ChromeUtils.importESModule("resource:///modules/MailServices.sys.mjs");
+      for (const account of MailServices.accounts.accounts) {
+        if (account.incomingServer?.type == "jmap") {
+          await registry?.whenIdle(account.incomingServer).catch(() => {});
+        }
+      }
       Services.startup.quit(Ci.nsIAppStartup.eAttemptQuit);
     }
   }

@@ -28,6 +28,8 @@ export interface AccountReport {
   folders: FolderReport[];
   messages: Record<string, MessageReport[]>;
   lastSyncError: string | null;
+  /** "Check for new messages at startup" in the account's server settings. */
+  loginAtStartUp: boolean;
 }
 
 export interface Inspection {

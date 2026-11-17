@@ -67,7 +67,16 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
   });
 
   test("after a restart those folders and their mail are still there", async () => {
-    const r = await runScenario<Inspection>({ version, profile, scenario: "inspect", args: { noSync: true } });
+    // The tree above exists only locally; a sync (such as the one at
+    // startup) would rightly replace it with the server's real mailboxes.
+    // With the server gone, the restart shows what was stored.
+    await s.stop();
+    const r = await runScenario<Inspection>({
+      version,
+      profile,
+      scenario: "inspect",
+      args: { noSync: true, waitIdle: true },
+    });
     expect(r.ok, r.error).toBe(true);
     expect(summary(r)).toEqual(EXPECTED);
     expect(r.accounts[0].messages["Me <me@example.com>/Inbox"]?.map(m => m.subject)).toEqual([MESSAGE.subject]);

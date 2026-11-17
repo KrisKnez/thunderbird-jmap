@@ -151,6 +151,7 @@ export async function report(registry) {
       folders,
       messages,
       lastSyncError: registry.runtimeFor(server).lastSyncError?.name ?? null,
+      loginAtStartUp: server.loginAtStartUp,
     });
   }
   const logins = await Services.logins.getAllLogins();
@@ -367,7 +368,34 @@ export const SCENARIOS = {
     return { ...(await report(registry)), streamedContains: streamed.data.includes(body) };
   },
 
+  /** Make every jmap server look as created by a version without the startup check. */
+  async "as-older-account"({ registry }) {
+    for (const server of jmapServers()) {
+      server.loginAtStartUp = false;
+      Services.prefs.clearUserPref(`mail.server.${server.key}.jmap_startup_check_default_applied`);
+    }
+    return report(registry);
+  },
+
+  /** Set "Check for new messages at startup" on every jmap server. args: { value: boolean } */
+  async "login-at-startup"({ registry, args }) {
+    for (const server of jmapServers()) {
+      server.loginAtStartUp = args.value;
+    }
+    return report(registry);
+  },
+
+  /**
+   * Report on every jmap account. args: { noSync?: true, waitIdle?: true }:
+   * noSync skips the scenario's own sync; waitIdle waits for syncs already
+   * under way (such as the one started at startup) to finish first.
+   */
   async inspect({ registry, args }) {
+    if (args?.waitIdle) {
+      for (const server of jmapServers()) {
+        await registry.whenIdle(server).catch(() => {});
+      }
+    }
     if (!args?.noSync) {
       for (const server of jmapServers()) {
         await registry.syncServer(server, "test").catch(() => {});

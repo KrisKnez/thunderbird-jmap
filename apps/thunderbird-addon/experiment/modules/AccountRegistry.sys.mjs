@@ -59,6 +59,8 @@ class ConfirmServerError extends Error {
   }
 }
 const BODY_PREF = "extensions.thunderbird-jmap.backgroundBodyDownload";
+/** Server pref: the "check for mail at startup" default was applied once. */
+const STARTUP_DEFAULT_APPLIED = "jmap_startup_check_default_applied";
 
 let resolveReady;
 const ready = new Promise(resolve => (resolveReady = resolve));
@@ -88,6 +90,18 @@ export function startup() {
         void server.rootFolder.subFolders;
       } catch (e) {
         log.error(`folder discovery for ${server.key} failed`, e);
+      }
+      // "Check for new messages at startup" is on by default (applied once
+      // to accounts created before it was; core stores "off" by clearing
+      // the pref, so only a marker tells "never set" from "turned off").
+      // Core's own startup check runs before this type is registered, so it
+      // never reaches our servers: sync them here.
+      if (!server.getBoolValue(STARTUP_DEFAULT_APPLIED)) {
+        server.loginAtStartUp = true;
+        server.setBoolValue(STARTUP_DEFAULT_APPLIED, true);
+      }
+      if (server.loginAtStartUp) {
+        syncServer(server, "startup").catch(() => {});
       }
     }
   } catch (e) {
@@ -303,6 +317,8 @@ export async function createAccount(details) {
     server.setStringValue("jmap_account_id", accountId);
     server.setStringValue("jmap_auth_kind", authKind);
     server.setIntValue("secondsToLeaveUnavailable", KEEP_UNAVAILABLE_SECONDS);
+    server.loginAtStartUp = true;
+    server.setBoolValue(STARTUP_DEFAULT_APPLIED, true);
 
     const identity = MailServices.accounts.createIdentity();
     identity.email = email;
