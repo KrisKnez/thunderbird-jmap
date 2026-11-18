@@ -1,7 +1,7 @@
 {
   "name": "thunderbird-jmap",
   "private": true,
-  "version": "0.21.5",
+  "version": "0.21.6",
   "license": "MPL-2.0",
   "type": "module",
   "packageManager": "pnpm@10.12.1",
