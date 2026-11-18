@@ -228,6 +228,16 @@ describe("Outbox", () => {
     expect(setCalls()).toEqual([]);
   });
 
+  test("a keyword change that matches the server, with nothing queued, changes nothing and says so", async () => {
+    const counted = countingStorage();
+    const { ob } = outbox({ storage: counted.storage });
+    expect(await ob.enqueue(kw("e1", {}))).toBe(false);
+    expect(counted.saves()).toBe(0);
+    expect(await ob.enqueue(kw("e1", { "keywords/$seen": true }))).toBe(true);
+    expect(await ob.enqueue(kw("e1", {}))).toBe(true);
+    expect(ob.size).toBe(0);
+  });
+
   test("a new keyword diff replaces the queued one", async () => {
     const { ob } = outbox();
     await ob.enqueue(kw("e1", { "keywords/$seen": null, "keywords/$flagged": true }));

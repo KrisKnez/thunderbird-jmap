@@ -482,7 +482,8 @@ export function queueChange(server, op) {
     .getOutbox()
     .then(outbox => outbox.enqueue(op))
     .then(
-      () => scheduleFlush(server),
+      // A change that matches the server leaves nothing to send.
+      changed => changed && scheduleFlush(server),
       e => log.warn(`could not queue a change for ${server.key}`, e)
     );
 }

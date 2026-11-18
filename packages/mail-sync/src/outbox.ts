@@ -82,7 +82,8 @@ function coalesce(ops: OutboxOp[], op: OutboxOp, sending: Set<OutboxOp>): Outbox
     // The watcher sends the whole difference from the server each time, so
     // the newest replaces what is queued, and an empty one cancels it.
     const rest = ops.filter(o => !(same(o) && o.kind == "keywords"));
-    return Object.keys(op.patch).length ? [...rest, op] : rest;
+    if (Object.keys(op.patch).length) return [...rest, op];
+    return rest.length == ops.length ? ops : rest;
   }
   if (op.kind == "move") {
     const index = ops.findIndex(o => same(o) && o.kind == "move" && o.toMailboxId == op.fromMailboxId);
@@ -152,11 +153,14 @@ export class Outbox {
     this.ops = await this.storage.load();
   }
 
-  /** Queue a change; resolves once the queue (with it) is saved. */
-  enqueue(op: OutboxOp): Promise<void> {
+  /**
+   * Queue a change; resolves once the queue (with it) is saved, to whether
+   * the queue changed (a change that matches the server leaves it as it is).
+   */
+  enqueue(op: OutboxOp): Promise<boolean> {
     const before = this.ops;
     this.ops = coalesce(this.ops, op, this.sending);
-    return this.ops == before ? Promise.resolve() : this.save();
+    return this.ops == before ? Promise.resolve(false) : this.save().then(() => true);
   }
 
   /** Write the queue once for all changes made in this tick. */
