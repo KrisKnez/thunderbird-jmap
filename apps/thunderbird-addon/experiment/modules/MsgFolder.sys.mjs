@@ -13,6 +13,18 @@ import { notify } from "./Notify.sys.mjs";
 import { mailboxIdOf } from "./TbMailStore.sys.mjs";
 import { TYPE } from "./IncomingServer.sys.mjs";
 
+/**
+ * Tell message lists showing `folder` that a move or delete from it is
+ * over; until then they ignore the next Delete (nsMsgDBView waits for it).
+ */
+function deleteOrMoveDone(folder, ok) {
+  try {
+    folder.NotifyFolderEvent(ok ? "DeleteOrMoveMsgCompleted" : "DeleteOrMoveMsgFailed");
+  } catch (e) {
+    log.warn("could not notify the end of a move or delete", e);
+  }
+}
+
 export const MESSAGE_SCHEME = "jmap-message";
 
 export const FolderProps = {
@@ -83,6 +95,10 @@ JmapFolder.prototype = {
       } catch (e) {
         log.warn("copy completion failed", e);
       }
+      if (isMove && !isFolder) {
+        // The source's message list waits for this before its next move or delete.
+        deleteOrMoveDone(srcFolder, Components.isSuccessCode(status));
+      }
     };
     if (!isMove || srcFolder?.server?.key != server.key || isFolder) {
       notify(server, "Copying messages isn't available for JMAP accounts yet.");
@@ -118,6 +134,13 @@ JmapFolder.prototype = {
   deleteMessages(messages, msgWindow, deleteStorage, isMove, listener, allowUndo) {
     const folder = this.delegator.get();
     const server = this.cppBase.server;
+    if (isMove) {
+      // Another account copied these messages and now asks to remove the
+      // originals: not supported, so the move ends as a copy. Failing here
+      // makes Thunderbird keep the originals and tell the message list.
+      notify(server, "Moving messages to another account isn't available for JMAP accounts yet; they were copied instead.");
+      throw Components.Exception("moving out of a JMAP account", Cr.NS_ERROR_NOT_IMPLEMENTED);
+    }
     const store = runtimeFor(server).store;
     const mailboxId = mailboxIdOf(folder);
     const inTrash = folder.getFlag(Ci.nsMsgFolderFlags.Trash);
@@ -131,27 +154,31 @@ JmapFolder.prototype = {
           folder.msgDatabase.deleteHeader(hdr, null, false, true);
           continue;
         }
-        if (isMove) {
+        // An email also in other mailboxes only leaves this one.
+        const elsewhere = (await store.mailboxesContaining(emailId)).filter(id => id != mailboxId);
+        if (inTrash || deleteStorage || !trashId) {
           await store.removeMessage(mailboxId, emailId);
-        } else if (inTrash || deleteStorage || !trashId) {
+          queueChange(
+            server,
+            elsewhere.length ? { kind: "removeMailbox", emailId, mailboxId } : { kind: "destroy", emailId }
+          );
+        } else if (elsewhere.some(id => id != trashId)) {
           await store.removeMessage(mailboxId, emailId);
-          queueChange(server, { kind: "destroy", emailId });
-        } else {
-          const others = (await store.mailboxesContaining(emailId)).filter(id => id != mailboxId && id != trashId);
-          if (others.length) {
-            await store.removeMessage(mailboxId, emailId);
-            queueChange(server, { kind: "removeMailbox", emailId, mailboxId });
-          } else if (await store.moveLocalCopy(mailboxId, trashId, emailId)) {
-            queueChange(server, { kind: "move", emailId, fromMailboxId: mailboxId, toMailboxId: trashId });
-          }
+          queueChange(server, { kind: "removeMailbox", emailId, mailboxId });
+        } else if (await store.moveLocalCopy(mailboxId, trashId, emailId)) {
+          queueChange(server, { kind: "move", emailId, fromMailboxId: mailboxId, toMailboxId: trashId });
         }
       }
       store.flushTouched();
     })().then(
-      () => listener?.OnStopCopy?.(Cr.NS_OK),
+      () => {
+        deleteOrMoveDone(folder, true);
+        listener?.onStopCopy(Cr.NS_OK);
+      },
       e => {
         log.error("deleting messages failed", e);
-        listener?.OnStopCopy?.(Cr.NS_ERROR_FAILURE);
+        deleteOrMoveDone(folder, false);
+        listener?.onStopCopy(Cr.NS_ERROR_FAILURE);
       }
     );
   },
@@ -175,6 +202,13 @@ JmapFolder.prototype = {
         log.warn("copy completion failed", e);
       }
     };
+    if (!isDraftOrTemplate) {
+      // A message file (an .eml dropped on the folder, a message with its
+      // attachments removed): copying into the account is not supported yet.
+      notify(server, "Copying messages isn't available for JMAP accounts yet.");
+      Promise.resolve().then(() => finish(Cr.NS_ERROR_NOT_IMPLEMENTED));
+      return;
+    }
     (async () => {
       const key = await store.storeLocalMessage(mailboxId, file, DRAFT_KEYWORDS);
       store.flushTouched();
@@ -211,8 +245,13 @@ JmapFolder.prototype = {
         for (const hdr of [...trash.messages]) {
           const emailId = hdr.getStringProperty("jmapId");
           if (emailId) {
+            // An email also in other mailboxes only leaves the Trash.
+            const elsewhere = (await store.mailboxesContaining(emailId)).filter(id => id != mailboxId);
             await store.removeMessage(mailboxId, emailId);
-            queueChange(server, { kind: "destroy", emailId });
+            queueChange(
+              server,
+              elsewhere.length ? { kind: "removeMailbox", emailId, mailboxId } : { kind: "destroy", emailId }
+            );
           } else {
             trash.msgDatabase.deleteHeader(hdr, null, false, true);
           }

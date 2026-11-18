@@ -39,6 +39,11 @@ function storedServerKeywords(hdr) {
   }
 }
 
+/** Whether the header records the server's keywords (not so for headers synced before Phase 2). */
+export function knowsServerKeywords(hdr) {
+  return storedServerKeywords(hdr) !== null;
+}
+
 /** The keywords the server last reported for this header ([] when unknown). */
 export function serverKeywordsOf(hdr) {
   return storedServerKeywords(hdr) ?? [];
@@ -76,6 +81,11 @@ export function localFlagsOf(hdr) {
 }
 
 const STATE_FILE = "jmap-sync-state.json";
+/**
+ * Set in the sync state once a full sync has recorded the server's keywords
+ * on every header. State from before Phase 2 lacks it: one full sync runs.
+ */
+const KEYWORDS_KEPT = "serverKeywordsKept";
 /**
  * Set in a folder database's folder info once the folder holds a complete
  * copy of its mailbox. A known folder without it lost its database (or was
@@ -163,6 +173,10 @@ export class TbMailStore {
       return null;
     }
     const copy = structuredClone(state);
+    if (copy.emailState && !copy[KEYWORDS_KEPT]) {
+      log.info("headers do not record the server's keywords yet; full sync needed");
+      copy.emailState = null;
+    }
     if (copy.emailState) {
       const incomplete = copy.mailboxes
         .filter(m => localFolderName(m.id))
@@ -186,6 +200,10 @@ export class TbMailStore {
   async emailSyncComplete({ full } = { full: false }) {
     if (!full) {
       return;
+    }
+    const state = this.readStateSync();
+    if (state && !state[KEYWORDS_KEPT]) {
+      await this.saveState({ ...state, [KEYWORDS_KEPT]: true });
     }
     for (const folder of this._folders()) {
       if (mailboxIdOf(folder)) {
@@ -771,16 +789,6 @@ export class TbMailStore {
     hdr.setStringProperty(SERVER_KEYWORDS, JSON.stringify([...keywords].sort()));
     this._folderIndex(mailboxId).set(email.id, key);
     this._touched.add(folder);
-  }
-
-  /** Remove a local message by key (e.g. a draft the server would not take). */
-  removeLocalByKey(mailboxId, key) {
-    const folder = this.folderForMailbox(mailboxId);
-    const hdr = folder?.msgDatabase.getMsgHdrForKey(key);
-    if (hdr) {
-      folder.msgDatabase.deleteHeader(hdr, null, false, true);
-      this._touched.add(folder);
-    }
   }
 
   /** The subject of a local message by key ("" if unknown). */

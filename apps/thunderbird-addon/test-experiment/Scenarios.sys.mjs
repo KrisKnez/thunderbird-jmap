@@ -493,11 +493,15 @@ export const SCENARIOS = {
    * Change messages through the different paths Thunderbird has, then sync
    * (which sends queued changes first). Auto-read on display is off except
    * for the "select-auto-read" path.
-   * args: { folderPath, changes: [{ path, subject }] }
+   * args: { folderPath, changes: [{ path, subject }], syncFirst? }
    */
   async "change-all"({ registry, args }) {
     const server = jmapServers()[0];
     await registry.whenIdle(server).catch(() => {});
+    if (args.syncFirst) {
+      await registry.syncServer(server, "test").catch(() => {});
+      await registry.whenIdle(server).catch(() => {});
+    }
     const folder = folderByPath(server, args.folderPath);
     const hdrOf = subject => [...folder.messages].find(h => h.mime2DecodedSubject == subject);
     Services.prefs.setBoolPref("mailnews.mark_message_read.auto", false);
@@ -517,6 +521,14 @@ export const SCENARIOS = {
           break;
         case "folder-read-all":
           folder.markMessagesRead([...folder.messages], true);
+          break;
+        case "unread":
+          folder.markMessagesRead([hdr], false);
+          break;
+        case "read-then-unread":
+          // Changed back before the queue is sent.
+          folder.markMessagesRead([hdr], true);
+          folder.markMessagesRead([hdr], false);
           break;
         case "hdr-read":
           hdr.markRead(true);
@@ -577,6 +589,7 @@ export const SCENARIOS = {
       },
     };
     MailServices.mailSession.addUserFeedbackListener(feedback);
+    const extra = {};
     try {
       const folder = folderByPath(server, args.folderPath);
       const hdr = args.subject ? [...folder.messages].find(h => h.mime2DecodedSubject == args.subject) : null;
@@ -602,8 +615,81 @@ export const SCENARIOS = {
         case "move":
         case "copy": {
           const { promise, listener } = copyDone();
-          MailServices.copy.copyMessages(folder, [hdr], folderByPath(server, args.toPath), args.op == "move", listener, null, true);
-          await promise;
+          let dest;
+          if (args.toLocal) {
+            // A folder in Local Folders (another account); the getter throws
+            // when the profile has none.
+            const localServer = () => {
+              try {
+                return MailServices.accounts.localFoldersServer;
+              } catch (e) {
+                return null;
+              }
+            };
+            if (!localServer()) {
+              MailServices.accounts.createLocalMailAccount();
+            }
+            const root = localServer().rootFolder;
+            if (!root.containsChildNamed(args.toLocal)) {
+              root.createSubfolder(args.toLocal, null);
+            }
+            dest = root.getChildNamed(args.toLocal);
+          } else {
+            dest = folderByPath(server, args.toPath);
+          }
+          try {
+            MailServices.copy.copyMessages(folder, [hdr], dest, args.op == "move", listener, null, true);
+            extra.copyStatus = await promise;
+          } catch (e) {
+            if (!args.toLocal) {
+              throw e;
+            }
+            extra.copyError = ChromeUtils.getXPCOMErrorName?.(e.result) ?? String(e.result);
+          }
+          if (args.toLocal) {
+            await sleep(1000);
+            extra.localCopies = [...dest.messages].map(h => h.mime2DecodedSubject);
+          }
+          break;
+        }
+        case "delete-twice": {
+          // Two Deletes in a row in one message list.
+          Services.prefs.setBoolPref("mailnews.mark_message_read.auto", false);
+          const { about3Pane } = await about3PaneReady();
+          about3Pane.displayFolder(folder);
+          await waitFor(() => about3Pane.gDBView?.rowCount > 0);
+          for (const subject of args.subjects) {
+            const target = [...folder.messages].find(h => h.mime2DecodedSubject == subject);
+            about3Pane.threadTree.selectedIndex = about3Pane.gDBView.findIndexOfMsgHdr(target, true);
+            await sleep(300);
+            about3Pane.gDBView.doCommand(Ci.nsMsgViewCommandType.deleteMsg);
+            await sleep(1000);
+          }
+          break;
+        }
+        case "delete-api": {
+          // As an add-on (messages.delete) deletes: with a copy listener.
+          const done = Promise.withResolvers();
+          folder.deleteMessages(
+            [hdr],
+            null,
+            false,
+            false,
+            {
+              QueryInterface: ChromeUtils.generateQI(["nsIMsgCopyServiceListener"]),
+              onStartCopy() {},
+              onProgress() {},
+              setMessageKey() {},
+              getMessageId() {
+                return "";
+              },
+              onStopCopy(status) {
+                done.resolve(status);
+              },
+            },
+            false
+          );
+          extra.stopCopy = await Promise.race([done.promise, sleep(10000).then(() => null)]);
           break;
         }
         case "delete":
@@ -641,7 +727,7 @@ export const SCENARIOS = {
       await registry.syncServer(server, "test").catch(() => {});
       await registry.whenIdle(server).catch(() => {});
       const runtime = registry.runtimeFor(server);
-      return { ...(await report(registry)), queued: runtime.outbox?.size ?? 0, stats: runtime.stats, notices };
+      return { ...(await report(registry)), ...extra, queued: runtime.outbox?.size ?? 0, stats: runtime.stats, notices };
     } finally {
       MailServices.mailSession.removeUserFeedbackListener(feedback);
     }
@@ -699,7 +785,8 @@ export const SCENARIOS = {
         },
       };
       if (args.intoFolder) {
-        MailServices.copy.copyFileMessage(file, folderByPath(server, args.intoFolder), null, true, 0, "", copyListener, null);
+        // isDraft false: a plain message file (e.g. an .eml dropped on the folder).
+        MailServices.copy.copyFileMessage(file, folderByPath(server, args.intoFolder), null, args.isDraft ?? true, 0, "", copyListener, null);
       } else {
         let msgToReplace = null;
         if (args.replace) {
@@ -893,6 +980,30 @@ export const SCENARIOS = {
     keep.smtpServerKey = "";
     keep.doFcc = true;
     return { kept: keep.email };
+  },
+
+  /**
+   * Make the account's headers and sync state look as Phase 1 left them:
+   * no record of the server's keywords on any header.
+   */
+  async "as-phase-1-headers"({ registry }) {
+    const server = jmapServers()[0];
+    await registry.whenIdle(server).catch(() => {});
+    let headers = 0;
+    for (const folder of server.rootFolder.descendants) {
+      for (const hdr of folder.messages) {
+        hdr.setStringProperty("jmapServerKeywords", "");
+        headers++;
+      }
+      folder.msgDatabase.commit(Ci.nsMsgDBCommitType.kLargeCommit);
+    }
+    // Through the store: it keeps the state in memory and saves it again on
+    // every sync (Thunderbird starts one when a folder is opened).
+    const store = registry.runtimeFor(server).store;
+    const state = structuredClone(store.readStateSync());
+    delete state.serverKeywordsKept;
+    await store.saveState(state);
+    return { headers };
   },
 
   /** Make every jmap server look as created by a version without the startup check. */

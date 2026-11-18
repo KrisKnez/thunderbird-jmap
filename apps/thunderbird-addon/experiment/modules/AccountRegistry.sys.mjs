@@ -331,6 +331,7 @@ export function runtimeFor(server) {
             hooks: outboxHooks(server, this),
             batchSize: Services.prefs.getIntPref(BATCH_PREF, 0) || undefined,
             log: (level, message) => log[level](message),
+            later: fn => setTimeout(fn, 0),
           });
           await outbox.load();
           this.outbox = outbox;
@@ -412,10 +413,9 @@ function outboxHooks(server, runtime) {
       runtime.stats.refused++;
       let subject = "";
       if (op.kind == "importDraft") {
-        // The server will not take it: nothing stays behind locally.
+        // The server will not take it; the draft stays in Thunderbird, so
+        // nothing the user wrote is lost.
         subject = runtime.store.subjectOfKey(op.mailboxId, op.localKey);
-        runtime.store.removeLocalByKey(op.mailboxId, op.localKey);
-        runtime.store.flushTouched();
       } else if (op.emailId) {
         subject = runtime.store.subjectOf(op.emailId);
       }
@@ -453,9 +453,14 @@ async function flushQueue(server) {
       }
       runtime.store.flushTouched();
     }
-    for (const { error, subject } of refused) {
+    for (const { op, error, subject } of refused) {
       const reason = String(error.description ?? error.type).replace(/\.\s*$/, "");
-      notify(server, `The server refused a change to “${subject}”: ${reason}. It now shows as it is on the server.`);
+      notify(
+        server,
+        op.kind == "importDraft"
+          ? `The server refused to save “${subject}”: ${reason}. It is kept in this folder in Thunderbird only.`
+          : `The server refused a change to “${subject}”: ${reason}. It now shows as it is on the server.`
+      );
     }
   }
 }

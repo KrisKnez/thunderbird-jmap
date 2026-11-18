@@ -36,6 +36,7 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
     let drafts: string;
     let draftsPath: string[];
     let from: string;
+    let firstDraftId: string;
 
     /** Subjects and keywords of the emails in the server's Drafts mailbox. */
     const serverDrafts = async () => {
@@ -47,6 +48,7 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
     const save = (args: Record<string, unknown>) =>
       runScenario<SaveResult>({ version, profile, scenario: "save-draft", args: { from, to: "to@dest.test", ...args } });
     const localDrafts = (r: Inspection) => r.accounts[0].messages[draftsPath.join("/")] ?? [];
+    const onServer = async (id: string) => (await emailGet(client, accountId, [id], ["id"])).list.length > 0;
 
     beforeAll(async () => {
       if (kind == "stalwart") {
@@ -92,6 +94,7 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
       const local = localDrafts(r).filter(m => m.subject == "Draft one");
       expect(local).toHaveLength(1);
       expect(local[0].jmapId).toBeTruthy();
+      firstDraftId = local[0].jmapId!;
     });
 
     test("saving the draft again replaces it: one draft on the server", async () => {
@@ -100,17 +103,21 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
       expect(r.status).toBe(0);
       expect(await serverDrafts()).toEqual([{ subject: "Draft one, edited", draft: true }]);
       expect(localDrafts(r).map(m => m.subject)).toEqual(["Draft one, edited"]);
+      // Gone from the server altogether, not moved to Trash.
+      expect(await onServer(firstDraftId)).toBe(false);
     });
 
-    test("on Mailflare a message saved outside Drafts is refused with a notice and leaves nothing behind", async () => {
+    test("on Mailflare a template saved outside Drafts is refused with a notice and kept in Thunderbird", async () => {
       if (kind != "mailflare") return;
       const archive = [draftsPath[0], "Archive"];
       const r = await save({ subject: "Template one", intoFolder: archive });
       expect(r.ok, r.error).toBe(true);
       expect(r.notices).toEqual([
-        expect.stringMatching(/^me@example\.test: The server refused a change to “Template one”: New messages can only be created in a Drafts mailbox\. It now shows as it is on the server\.$/),
+        expect.stringMatching(
+          /^me@example\.test: The server refused to save “Template one”: New messages can only be created in a Drafts mailbox\. It is kept in this folder in Thunderbird only\.$/
+        ),
       ]);
-      expect(r.accounts[0].messages[archive.join("/")] ?? []).toEqual([]);
+      expect((r.accounts[0].messages[archive.join("/")] ?? []).map(m => m.subject)).toEqual(["Template one"]);
     });
 
     test("a draft saved while the server is down reaches the server after a restart (Mailflare)", async () => {
@@ -128,6 +135,14 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
       expect(back.ok, back.error).toBe(true);
       expect(back.queued).toBe(0);
       expect((await serverDrafts()).map(d => d.subject)).toContain("Offline draft");
+    });
+
+    test("a message file that is not a draft (e.g. a dropped .eml) is refused and nothing is saved", async () => {
+      const r = await save({ subject: "Plain file", intoFolder: draftsPath, isDraft: false });
+      expect(r.ok, r.error).toBe(true);
+      expect(r.notices.some(n => n.endsWith("Copying messages isn't available for JMAP accounts yet."))).toBe(true);
+      expect((await serverDrafts()).map(d => d.subject)).not.toContain("Plain file");
+      expect(localDrafts(r).map(m => m.subject)).not.toContain("Plain file");
     });
   });
 });

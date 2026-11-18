@@ -21,22 +21,44 @@ const SESSION = {
 let calls: { name: string; args: any }[];
 let refuse: Record<string, SetError>;
 let networkDown: boolean;
+/** A method-level error for an Email/set call, or null. */
+let methodError: (args: any) => string | null;
+let uploadStatus: number;
+let serverStatus: number;
+/** Runs when an Email/set request arrives, before it is answered. */
+let onSet: ((args: any) => Promise<void>) | null;
 let client: JmapClient;
 
 beforeEach(() => {
   calls = [];
   refuse = {};
   networkDown = false;
+  methodError = () => null;
+  uploadStatus = 200;
+  serverStatus = 200;
+  onSet = null;
   const fetch = async (url: string, init?: RequestInit) => {
-    const reply = (body: unknown) =>
-      Object.defineProperty(new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }), "url", { value: url });
+    const reply = (body: unknown, status = 200) =>
+      Object.defineProperty(new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }), "url", { value: url });
     if (url.endsWith("/jmap/session")) return reply(SESSION);
     if (networkDown) throw new TypeError("connection refused");
-    if (url.includes("/jmap/upload/")) return reply({ accountId: "a", blobId: "blob1", type: "message/rfc822", size: 3 });
+    if (url.includes("/jmap/upload/")) {
+      return uploadStatus == 200
+        ? reply({ accountId: "a", blobId: "blob1", type: "message/rfc822", size: 3 })
+        : reply({ type: "urn:ietf:params:jmap:error:limit", status: uploadStatus, detail: "too large" }, uploadStatus);
+    }
+    if (serverStatus != 200) return reply({}, serverStatus);
     const body = JSON.parse(String(init!.body));
+    for (const [name, args] of body.methodCalls) {
+      if (name == "Email/set" && onSet) await onSet(args);
+    }
     return reply({
       methodResponses: body.methodCalls.map(([name, args, id]: [string, any, string]) => {
         calls.push({ name, args });
+        const failed = name == "Email/set" ? methodError(args) : null;
+        if (failed) {
+          return ["error", { type: failed }, id];
+        }
         if (name == "Email/import") {
           return [name, { created: { draft: { id: "new1", blobId: "blob1", threadId: "t1" } } }, id];
         }
@@ -71,6 +93,16 @@ function memoryStorage(): OutboxStorage & { saved: OutboxOp[] } {
     },
   };
   return storage;
+}
+
+function countingStorage() {
+  const storage = memoryStorage();
+  let saves = 0;
+  return {
+    storage: { load: storage.load, save: async (ops: OutboxOp[]) => (saves++, storage.save(ops)) },
+    saves: () => saves,
+    saved: () => storage.saved,
+  };
 }
 
 function outbox(o: { storage?: OutboxStorage; batchSize?: number } = {}) {
@@ -185,5 +217,88 @@ describe("Outbox", () => {
     const imp = calls.find(c => c.name == "Email/import")!;
     expect(imp.args.emails.draft).toEqual({ blobId: "blob1", mailboxIds: { "mbx_A~drafts": true }, keywords: { $draft: true, $seen: true } });
     expect(imported).toEqual([{ id: "new1", blobId: "blob1", threadId: "t1" }]);
+  });
+
+  test("a keyword change undone before the flush sends nothing", async () => {
+    const { ob } = outbox();
+    await ob.enqueue(kw("e1", { "keywords/$seen": null }));
+    await ob.enqueue(kw("e1", {}));
+    expect(ob.size).toBe(0);
+    await ob.flush();
+    expect(setCalls()).toEqual([]);
+  });
+
+  test("a new keyword diff replaces the queued one", async () => {
+    const { ob } = outbox();
+    await ob.enqueue(kw("e1", { "keywords/$seen": null, "keywords/$flagged": true }));
+    await ob.enqueue(kw("e1", { "keywords/$flagged": true }));
+    await ob.flush();
+    expect(setCalls()).toEqual([{ update: { e1: { "keywords/$flagged": true } }, destroy: undefined }]);
+  });
+
+  test("a move made while the previous move is being sent goes after it, not into it", async () => {
+    const { ob } = outbox();
+    await ob.enqueue({ kind: "move", emailId: "e1", fromMailboxId: "A", toMailboxId: "B" });
+    onSet = async () => {
+      onSet = null;
+      await ob.enqueue({ kind: "move", emailId: "e1", fromMailboxId: "B", toMailboxId: "C" });
+    };
+    await ob.flush();
+    expect(setCalls().map(c => c.update)).toEqual([
+      { e1: { "mailboxIds/A": null, "mailboxIds/B": true } },
+      { e1: { "mailboxIds/B": null, "mailboxIds/C": true } },
+    ]);
+    expect(ob.size).toBe(0);
+  });
+
+  test("moving back while the move is being sent sends the move back", async () => {
+    const { ob } = outbox();
+    await ob.enqueue({ kind: "move", emailId: "e1", fromMailboxId: "A", toMailboxId: "B" });
+    onSet = async () => {
+      onSet = null;
+      await ob.enqueue({ kind: "move", emailId: "e1", fromMailboxId: "B", toMailboxId: "A" });
+    };
+    await ob.flush();
+    expect(setCalls().map(c => c.update)).toEqual([
+      { e1: { "mailboxIds/A": null, "mailboxIds/B": true } },
+      { e1: { "mailboxIds/B": null, "mailboxIds/A": true } },
+    ]);
+  });
+
+  test("a method error refuses only the email that caused it; the others are applied", async () => {
+    methodError = args => (args.update?.bad ? "invalidArguments" : null);
+    const { ob, applied, refused } = outbox();
+    for (const id of ["e1", "bad", "e3"]) await ob.enqueue(kw(id, { "keywords/$seen": true }));
+    expect(await ob.flush()).toEqual({ applied: 2, refused: 1 });
+    expect(refused.map(([op, e]) => [(op as any).emailId, e.type])).toEqual([["bad", "invalidArguments"]]);
+    expect(applied.map(op => (op as any).emailId).sort()).toEqual(["e1", "e3"]);
+    expect(ob.size).toBe(0);
+  });
+
+  test("a draft the server will not take (upload too large) is refused and the rest is sent", async () => {
+    uploadStatus = 413;
+    const { ob, applied, refused } = outbox();
+    await ob.enqueue({ kind: "importDraft", mailboxId: "d", localKey: 7, keywords: ["$draft"] });
+    await ob.enqueue(kw("e1", { "keywords/$seen": true }));
+    expect(await ob.flush()).toEqual({ applied: 1, refused: 1 });
+    expect(refused[0][0].kind).toBe("importDraft");
+    expect(applied.map(op => op.kind)).toEqual(["keywords"]);
+  });
+
+  test("a server error (HTTP 503) keeps everything queued", async () => {
+    serverStatus = 503;
+    const { ob, refused } = outbox();
+    await ob.enqueue(kw("e1", { "keywords/$seen": true }));
+    await expect(ob.flush()).rejects.toThrow();
+    expect(ob.size).toBe(1);
+    expect(refused).toEqual([]);
+  });
+
+  test("queueing many changes at once writes the queue file once, and it holds them all", async () => {
+    const counted = countingStorage();
+    const { ob } = outbox({ storage: counted.storage });
+    await Promise.all(Array.from({ length: 100 }, (_, i) => ob.enqueue(kw(`e${i}`, { "keywords/$seen": true }))));
+    expect(counted.saves()).toBeLessThanOrEqual(2);
+    expect(counted.saved()).toHaveLength(100);
   });
 });

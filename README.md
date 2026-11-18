@@ -18,8 +18,9 @@ Design: `docs/superpowers/specs/2026-11-17-thunderbird-jmap-addon-design.md`.
   server is unreachable are kept and sent when it is back, also after a
   restart. If the server refuses a change, Thunderbird shows it as it is
   on the server and tells you why.
-- **Not yet:** copying messages (refused with a notice), creating,
-  renaming or deleting folders, push, Redirect.
+- **Not yet:** copying messages (refused with a notice), moving messages
+  to another account (they are copied instead), creating, renaming or
+  deleting folders, push, Redirect.
 
 ## Mailflare
 
@@ -31,10 +32,9 @@ Design: `docs/superpowers/specs/2026-11-17-thunderbird-jmap-addon-design.md`.
 - Only read and flagged are stored on the server; tags and junk stay in
   Thunderbird.
 - New messages can only be created in Drafts, so saving a template is
-  refused.
-- Shift+Delete and replaced drafts land in that address's Trash (its rule
-  for deleting outside Trash); delete them there, or Empty Trash, to remove
-  them.
+  refused (it stays in Thunderbird only).
+- Shift+Delete outside Trash lands in that address's Trash (its rule for
+  deleting outside Trash); delete it there, or Empty Trash, to remove it.
 
 ## Development
 

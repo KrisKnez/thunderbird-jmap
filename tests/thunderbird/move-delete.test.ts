@@ -26,8 +26,11 @@ interface OpResult extends Inspection {
   queued: number;
   stats: { applied: number; refused: number };
   notices: string[];
+  stopCopy?: number | null;
+  copyError?: string;
+  localCopies?: string[];
 }
-const SUBJECTS = ["M1", "D1", "D2", "C1", "X1"];
+const SUBJECTS = ["M1", "D1", "D2", "C1", "X1", "T1", "T2", "A1", "L1"];
 
 describe.each(TB_VERSIONS)("Thunderbird %s", version => {
   describe.each<Kind>(["stalwart", "mailflare"])("%s", kind => {
@@ -60,6 +63,7 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
           ids[subject] = await importEmail(client, accountId, { mailboxIds: [box.inbox], subject, body: subject });
         }
         ids.TWO = await importEmail(client, accountId, { mailboxIds: [box.inbox, box.alpha], subject: "TWO", body: "two" });
+        ids.TWO2 = await importEmail(client, accountId, { mailboxIds: [box.inbox, box.alpha], subject: "TWO2", body: "two" });
         for (const [n, minutes] of [[1, 1], [2, 2], [3, 3]]) {
           ids[`OLD${n}`] = await importEmail(client, accountId, {
             mailboxIds: [box.old],
@@ -207,6 +211,40 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
       expect(r.notices.some(n => n.endsWith("Copying messages isn't available for JMAP accounts yet."))).toBe(true);
       expect(await mailboxesOf(ids.M1)).toEqual([box.target]);
       expect(subjectsIn(r, path.inbox)).not.toContain("M1");
+    });
+
+    test("two Deletes in a row in the message list both reach the server", async () => {
+      const r = await op({ op: "delete-twice", folderPath: path.inbox, subjects: ["T1", "T2"] });
+      expect(r.ok, r.error).toBe(true);
+      expect(await mailboxesOf(ids.T1)).toEqual([box.trash]);
+      expect(await mailboxesOf(ids.T2)).toEqual([box.trash]);
+      expect(subjectsIn(r, path.inbox)).not.toContain("T2");
+    });
+
+    test("an add-on deleting a message is told when it is done", async () => {
+      const r = await op({ op: "delete-api", folderPath: path.inbox, subject: "A1" });
+      expect(r.ok, r.error).toBe(true);
+      expect(r.stopCopy).toBe(0);
+      expect(await mailboxesOf(ids.A1)).toEqual([box.trash]);
+    });
+
+    test("moving a message to Local Folders fails and leaves it in the account and on the server", async () => {
+      // Copying out is not supported (the message service has no copyMessage):
+      // the copy fails at once, so this folder is never asked to delete it.
+      const r = await op({ op: "move", folderPath: path.inbox, toLocal: "Saved", subject: "L1" });
+      expect(r.ok, r.error).toBe(true);
+      expect(r.copyError).toBeTruthy();
+      expect(r.localCopies).toEqual([]);
+      expect(subjectsIn(r, path.inbox)).toContain("L1");
+      expect(await mailboxesOf(ids.L1)).toEqual([box.inbox]);
+    });
+
+    test("Shift+Delete of one copy of an email in two mailboxes keeps the other (Stalwart)", async () => {
+      if (kind != "stalwart") return;
+      const r = await op({ op: "delete-storage", folderPath: path.inbox, subject: "TWO2" });
+      expect(r.ok, r.error).toBe(true);
+      expect(await mailboxesOf(ids.TWO2)).toEqual([box.alpha]);
+      expect(subjectsIn(r, path.inbox)).not.toContain("TWO2");
     });
   });
 });

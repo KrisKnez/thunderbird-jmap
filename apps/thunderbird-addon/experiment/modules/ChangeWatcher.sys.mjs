@@ -12,7 +12,13 @@
 
 import { MailServices } from "resource:///modules/MailServices.sys.mjs";
 import { flagsToKeywords, keywordPatch } from "./core.sys.mjs";
-import { isApplyingServerState, localFlagsOf, localOnlyOf, serverKeywordsOf } from "./TbMailStore.sys.mjs";
+import {
+  isApplyingServerState,
+  knowsServerKeywords,
+  localFlagsOf,
+  localOnlyOf,
+  serverKeywordsOf,
+} from "./TbMailStore.sys.mjs";
 import { log } from "./Log.sys.mjs";
 
 const WATCHED = new Set(["Status", "Flagged", "Keywords"]);
@@ -31,10 +37,13 @@ function check(hdr, enqueue) {
   if (!emailId) {
     return; // not on the server yet (e.g. a draft being saved)
   }
-  const patch = keywordPatch(serverKeywordsOf(hdr), flagsToKeywords(localFlagsOf(hdr)), localOnlyOf(hdr));
-  if (Object.keys(patch).length) {
-    enqueue(hdr.folder.server, { kind: "keywords", emailId, patch });
+  if (!knowsServerKeywords(hdr)) {
+    return; // synced before Phase 2: nothing to compare with until the next full sync
   }
+  // The whole difference from the server, even when empty: it replaces what
+  // is queued for this email, so a change undone before sending sends nothing.
+  const patch = keywordPatch(serverKeywordsOf(hdr), flagsToKeywords(localFlagsOf(hdr)), localOnlyOf(hdr));
+  enqueue(hdr.folder.server, { kind: "keywords", emailId, patch });
 }
 
 /** enqueue(server, op): hands an Outbox op to the account's runtime. */

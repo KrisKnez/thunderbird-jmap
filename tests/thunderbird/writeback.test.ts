@@ -38,6 +38,8 @@ const PATHS: [path: string, subject: string, keyword: string][] = [
   ["add-tag", "W7", "work"],
   ["view-junk", "W8", "$junk"],
 ];
+/** More messages, for the tests after the change paths. */
+const EXTRA = ["W9", "W10"];
 /** Mailflare keeps only $seen and $flagged. */
 const keeps = (kind: Kind, keyword: string) => kind == "stalwart" || keyword == "$seen" || keyword == "$flagged";
 
@@ -65,7 +67,7 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
         stalwart = await startStalwart();
         ({ client, accountId } = await connect(stalwart));
         const inbox = await mailboxIdByRole(client, accountId, "inbox");
-        for (const [, subject] of PATHS) {
+        for (const subject of [...PATHS.map(([, subject]) => subject), ...EXTRA]) {
           ids[subject] = await importEmail(client, accountId, { mailboxIds: [inbox], subject, body: subject });
         }
         const bulk = await createMailbox(client, accountId, "Bulk");
@@ -76,7 +78,7 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
       } else {
         mailflare = await startMailflare({ localParts: ["me"] });
         ({ client, accountId } = await connect(mailflare));
-        for (const [, subject] of PATHS) {
+        for (const subject of [...PATHS.map(([, subject]) => subject), ...EXTRA]) {
           await mailflare.deliver({ from: "out@sender.test", to: "me@example.test", subject, body: subject });
         }
         const { ids: all } = await client.call<{ ids: string[] }>("Email/query", { accountId, limit: 100 });
@@ -190,6 +192,38 @@ describe.each(TB_VERSIONS)("Thunderbird %s", version => {
       expect(r.stats.applied).toBe(30);
       const { list } = await emailGet(client, accountId, Array.from({ length: 30 }, (_, i) => ids[`B${i + 1}`]), ["keywords"]);
       expect(list.filter(e => e.keywords.$seen)).toHaveLength(30);
+    });
+
+    test("marking a message read and back to unread before the queue is sent leaves the server unread", async () => {
+      const r = await runScenario<ChangeResult>({
+        version,
+        profile,
+        scenario: "change-all",
+        args: { folderPath, changes: [{ path: "read-then-unread", subject: "W9" }] },
+      });
+      expect(r.ok, r.error).toBe(true);
+      expect(r.queued).toBe(0);
+      expect(await keywordsOf(ids.W9)).not.toContain("$seen");
+      expect(inFolder(r, "W9").read).toBe(false);
+    });
+
+    test("a message synced before Phase 2 can be marked unread (and it reaches the server)", async () => {
+      await patchOnServer(ids.W10, { "keywords/$seen": true });
+      const synced = await runScenario<ChangeResult>({ version, profile, scenario: "outbox-state", args: { sync: true } });
+      expect(inFolder(synced, "W10").read).toBe(true);
+      const old = await runScenario<{ ok: boolean; error?: string; headers: number }>({ version, profile, scenario: "as-phase-1-headers" });
+      expect(old.ok, old.error).toBe(true);
+      expect(old.headers).toBeGreaterThan(0);
+      const r = await runScenario<ChangeResult>({
+        version,
+        profile,
+        scenario: "change-all",
+        args: { folderPath, syncFirst: true, changes: [{ path: "unread", subject: "W10" }] },
+      });
+      expect(r.ok, r.error).toBe(true);
+      expect(r.queued).toBe(0);
+      expect(await keywordsOf(ids.W10)).not.toContain("$seen");
+      expect(inFolder(r, "W10").read).toBe(false);
     });
   });
 });
